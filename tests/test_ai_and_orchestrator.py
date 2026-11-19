@@ -255,7 +255,9 @@ def _gemini_service(settings, create_mock, fallbacks: str = "") -> AIService:
     client = MagicMock()
     client.chat.completions.create = create_mock
     client.with_options = MagicMock(return_value=client)
-    return AIService(settings, client=client)
+    ai = AIService(settings, client=client)
+    ai._retry_delays = (0.0,)  # testlarda kutmaymiz
+    return ai
 
 
 def _completion(content: str) -> SimpleNamespace:
@@ -368,3 +370,19 @@ def test_gemini_models_list_and_effort_validation(settings):
     assert s.gemini_models == ["a", "b", "c"]
     with pytest.raises(ValueError):
         Settings(_env_file=None, AI_REASONING_EFFORT="turbo")
+
+
+async def test_gemini_bad_json_tries_next_model_and_rounds(settings):
+    ok = _completion(_step(reaction="🔥").model_dump_json())
+    create = AsyncMock(side_effect=[_completion('{"intent": "x"}'), _busy(), ok])
+    ai = _gemini_service(settings, create, fallbacks="gemini-b")
+    ai._retry_delays = (0.0, 0.0)
+    out = await ai.structured(user_id=1, agent="t", instructions="i", user_input="u", schema=InterviewStep)
+    assert out.reaction == "🔥"
+    assert [c.kwargs["model"] for c in create.call_args_list] == ["gemini-test", "gemini-b", "gemini-test"]
+
+
+def test_reaction_falls_back_to_allowed():
+    assert _step(reaction="🦖").reaction == "👍"
+    assert _step(reaction="❤️").reaction == "❤"
+    assert _step().reaction == "👍"

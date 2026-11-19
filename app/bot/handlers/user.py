@@ -7,7 +7,7 @@ import re
 
 from aiogram import Bot, F, Router
 from aiogram.filters import Command, CommandObject, CommandStart
-from aiogram.types import Message
+from aiogram.types import Message, ReactionTypeEmoji
 from aiogram.utils.chat_action import ChatActionSender
 
 from app.bot.context import AppContext
@@ -206,10 +206,13 @@ async def conversation(message: Message, ctx: AppContext, db_user_id: int, bot: 
         await message.answer("Oldingi xabaringizni hali o'ylayapman, biroz kuting.")
         return
     try:
+        await _react(message, "👀")  # "o'qidim, o'ylayapman"
         async with ChatActionSender.typing(bot=bot, chat_id=message.chat.id):
             result = await ctx.orchestrator.handle_user_text(
                 telegram_id=tg_id, user_db_id=db_user_id, text=text
             )
+        if result.reaction:
+            await _react(message, result.reaction)
         await send_parts(bot, message.chat.id, result.messages)
 
         if result.looking_for_idea:
@@ -217,7 +220,8 @@ async def conversation(message: Message, ctx: AppContext, db_user_id: int, bot: 
 
         if result.run_analysis and result.project_id:
             await message.answer(
-                "Endi bozor, talab va xavflarni tahlil qilaman. Bu 1-3 daqiqa vaqt olishi mumkin."
+                "📊 Endi bozor, talab va xavflarni chuqur tahlil qilaman.\n"
+                "⏳ Bu 1-3 daqiqa vaqt olishi mumkin."
             )
             async with ChatActionSender.typing(bot=bot, chat_id=message.chat.id):
                 parts = await ctx.orchestrator.run_analysis(
@@ -225,14 +229,22 @@ async def conversation(message: Message, ctx: AppContext, db_user_id: int, bot: 
                 )
             await send_parts(bot, message.chat.id, parts)
             await message.answer(
-                "Tahlil tugadi. Promptni keyin ham /history orqali topasiz. "
-                "Boshqa g'oyangiz bo'lsa, shunchaki yozing — yangi suhbat boshlaymiz."
+                "✅ Tahlil tugadi! Promptni keyin ham /history orqali topasiz.\n\n"
+                "💡 Boshqa g'oyangiz bo'lsa, shunchaki yozing — yangi suhbat boshlaymiz."
             )
             await maybe_send_promo(bot, ctx, tg_id, message.chat.id)
     except AIServiceError as exc:
         await message.answer(exc.user_message)
     finally:
         await ctx.user_locks.release(tg_id)
+
+
+async def _react(message: Message, emoji: str) -> None:
+    """Xabarga reaksiya qo'yadi; Telegram rad etsa (masalan, reaksiyalar o'chirilgan) — jim o'tadi."""
+    try:
+        await message.react([ReactionTypeEmoji(emoji=emoji)])
+    except Exception:  # noqa: BLE001 — reaksiya ixtiyoriy bezak, suhbatni to'xtatmasin
+        logger.debug("reaction_failed", exc_info=True)
 
 
 @router.message(F.text.startswith("/"))

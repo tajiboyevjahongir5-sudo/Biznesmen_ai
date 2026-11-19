@@ -12,6 +12,10 @@ from app.services.ai_service import AIService
 
 AGENT_NAME = "interviewer"
 
+# Telegram bot qo'ya oladigan standart reaksiyalardan mos keladiganlari.
+ALLOWED_REACTIONS = ("👍", "🔥", "🤔", "👀", "✍", "🤝", "👏", "💯", "🙏", "❤", "🤩", "⚡", "🎉", "🏆", "👌")
+DEFAULT_REACTION = "👍"
+
 
 class Turn(BaseModel):
     role: Literal["assistant", "user"]
@@ -29,6 +33,13 @@ class InterviewStep(BaseModel):
     known_facts: list[str]
     open_questions: list[str]
     ready_for_analysis: bool
+    reaction: str = Field(default=DEFAULT_REACTION, max_length=16)
+
+    @field_validator("reaction", mode="before")
+    @classmethod
+    def _valid_reaction(cls, value: object) -> str:
+        value = str(value or "").strip().replace("️", "")
+        return value if value in ALLOWED_REACTIONS else DEFAULT_REACTION
 
     @field_validator("known_facts", "open_questions")
     @classmethod

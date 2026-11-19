@@ -31,6 +31,7 @@ class TurnResult:
     run_analysis: bool = False
     looking_for_idea: bool = False
     project_id: int | None = None
+    reaction: str | None = None  # foydalanuvchi xabariga qo'yiladigan reaksiya
 
 
 class Orchestrator:
@@ -77,7 +78,7 @@ class Orchestrator:
 
         async with self._sf() as session:
             project = await session.get(BusinessProject, project_id)
-            result = TurnResult(project_id=project_id)
+            result = TurnResult(project_id=project_id, reaction=step.reaction)
             if step.intent == "off_topic":
                 project.status = ProjectStatus.CANCELLED
                 result.messages.append(e(step.reply))

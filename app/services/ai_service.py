@@ -10,6 +10,7 @@ Vazifalari:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -54,7 +55,10 @@ class AIRateLimitedError(AIServiceError):
 
 
 class AIBusyError(AIServiceError):
-    user_message = "AI modeli hozir juda band. Iltimos, 1-2 daqiqadan keyin qayta yozing."
+    user_message = (
+        "⏳ AI hozir juda band. Bir necha marta urinib ko'rdim — iltimos, "
+        "1-2 daqiqadan keyin xabaringizni qayta yuboring."
+    )
 
 
 class AIQuotaExceededError(AIServiceError):
@@ -66,7 +70,7 @@ class AIConfigError(AIServiceError):
 
 
 class AIBadResponseError(AIServiceError):
-    user_message = "AI noto'g'ri formatdagi javob qaytardi. Iltimos, qayta urinib ko'ring."
+    user_message = "⚠️ AI javobi buzilib keldi. Iltimos, xabaringizni qayta yuboring."
 
 
 class UsageLimitError(AIServiceError):
@@ -379,32 +383,19 @@ class AIService:
                 logger.info("reasoning_effort qo'llab-quvvatlanmadi, usiz davom etiladi")
         return await one_shot.chat.completions.create(model=model, **kwargs)
 
-    async def _gemini_with_fallback(self, client: openai.AsyncOpenAI, **kwargs):
-        """Asosiy model band/sekin/mavjud bo'lmasa, GEMINI_FALLBACK_MODELS dagi keyingisiga o'tadi."""
-        last_exc: BaseException | None = None
-        for model in self._settings.gemini_models:
-            try:
-                return await self._gemini_create(client, model, **kwargs)
-            except _FALLBACK_ERRORS as exc:
-                if isinstance(exc, openai.APIStatusError) and not _is_retryable_status(exc):
-                    raise
-                last_exc = exc
-                logger.warning(
-                    "gemini_model_failed model=%s error=%s status=%s — keyingi modelga o'tiladi",
-                    model,
-                    type(exc).__name__,
-                    getattr(exc, "status_code", None),
-                )
-        assert last_exc is not None
-        raise last_exc
+    # Har bir "aylana"da barcha modellar sinaladi; aylanalar orasida kutiladi (soniya).
+    _retry_delays: tuple[float, ...] = (0.0, 3.0, 8.0)
+    # Bitta foydalanuvchi so'rovi uchun umumiy vaqt chegarasi (soniya).
+    _total_budget_seconds: float = 150.0
 
     async def _call_gemini(
         self, client: openai.AsyncOpenAI, instructions: str, user_input: str, schema: type[T], limit: int
     ) -> SimpleNamespace:
         """Gemini (OpenAI-mos Chat Completions): JSON rejimi + Pydantic tekshiruvi.
 
-        Natija `responses.parse` javobi bilan bir xil shaklga keltiriladi
-        (`output_parsed`, `usage.input_tokens/output_tokens`).
+        Model band/sekin bo'lsa yoki noto'g'ri JSON qaytarsa — keyingi modelga, hammasi
+        muvaffaqiyatsiz bo'lsa — biroz kutib yana boshidan urinadi. Natija `responses.parse`
+        javobi shakliga keltiriladi (`output_parsed`, `usage.input_tokens/output_tokens`).
         """
         schema_json = json.dumps(schema.model_json_schema(), ensure_ascii=False)
         system = (
@@ -416,13 +407,47 @@ class AIService:
             {"role": "system", "content": system},
             {"role": "user", "content": user_input},
         ]
-        completion = await self._gemini_with_fallback(
-            client, messages=messages, response_format={"type": "json_object"}, max_tokens=limit
-        )
+        last_exc: BaseException | None = None
+        deadline = time.monotonic() + self._total_budget_seconds
+        for round_no, delay in enumerate(self._retry_delays, start=1):
+            if delay:
+                await asyncio.sleep(delay)
+            for model in self._settings.gemini_models:
+                if last_exc is not None and time.monotonic() > deadline:
+                    raise last_exc
+                try:
+                    completion = await self._gemini_create(
+                        client,
+                        model,
+                        messages=messages,
+                        response_format={"type": "json_object"},
+                        max_tokens=limit,
+                    )
+                    return self._parse_gemini(completion, schema)
+                except _FALLBACK_ERRORS as exc:
+                    if isinstance(exc, openai.APIStatusError) and not _is_retryable_status(exc):
+                        raise
+                    last_exc = exc
+                except (ValidationError, ValueError) as exc:
+                    last_exc = exc
+                logger.warning(
+                    "gemini_attempt_failed round=%s model=%s error=%s status=%s",
+                    round_no,
+                    model,
+                    type(last_exc).__name__,
+                    getattr(last_exc, "status_code", None),
+                )
+        assert last_exc is not None
+        raise last_exc
+
+    @staticmethod
+    def _parse_gemini(completion, schema: type[T]) -> SimpleNamespace:
         choice = completion.choices[0] if completion.choices else None
         content = (choice.message.content or "") if choice else ""
+        if not content.strip():
+            raise ValueError("Gemini bo'sh javob qaytardi")
+        parsed = schema.model_validate_json(_strip_json_fence(content))
         usage = getattr(completion, "usage", None)
-        parsed = schema.model_validate_json(_strip_json_fence(content)) if content.strip() else None
         return SimpleNamespace(
             output_parsed=parsed,
             output=[],
