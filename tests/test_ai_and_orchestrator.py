@@ -304,6 +304,7 @@ async def test_diagnose_reports_missing_model_and_hides_key(settings):
     client.chat.completions.create = AsyncMock(
         side_effect=openai.NotFoundError(f"model not found for key {key}", response=_resp(404), body=None)
     )
+    client.with_options = MagicMock(return_value=client)
     lines = await AIService(settings, client=client).diagnose()
     text = "\n".join(lines)
     assert "RO'YXATDA YO'Q" in text

@@ -324,6 +324,30 @@ class AIService:
             lines.append("Sinov so'rovi: MUVAFFAQIYATLI.")
         except openai.OpenAIError as exc:
             lines.append(f"Sinov so'rovi xatosi: {self._describe(exc)}")
+
+        # 3) Bot ishlatadigan JSON rejimi (vaqti bilan)
+        started = time.perf_counter()
+        try:
+            resp = await client.with_options(max_retries=0).chat.completions.create(
+                model=s.ai_model,
+                messages=[
+                    {"role": "system", "content": 'Faqat JSON qaytar: {"ok": true}'},
+                    {"role": "user", "content": "Sinov"},
+                ],
+                response_format={"type": "json_object"},
+                max_tokens=s.openai_max_output_tokens,
+            )
+            secs = time.perf_counter() - started
+            choice = resp.choices[0] if resp.choices else None
+            content = (choice.message.content or "").strip() if choice else ""
+            reason = getattr(choice, "finish_reason", None)
+            lines.append(
+                f"JSON rejimi: javob {secs:.1f} s da keldi, finish_reason={reason}, "
+                f"matn={'bor' if content else 'BO`SH'}."
+            )
+        except openai.OpenAIError as exc:
+            secs = time.perf_counter() - started
+            lines.append(f"JSON rejimi xatosi ({secs:.1f} s): {self._describe(exc)}")
         return lines
 
     def _describe(self, exc: BaseException) -> str:
