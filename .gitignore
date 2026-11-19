@@ -1,0 +1,25 @@
+# Maxfiy sozlamalar
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Ma'lumotlar va loglar
+data/
+logs/
+*.db
+*.db-wal
+*.db-shm
+*.log
+
+# Muharrir
+.vscode/
+.idea/
