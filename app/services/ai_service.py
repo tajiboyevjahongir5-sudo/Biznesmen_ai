@@ -309,7 +309,7 @@ class AIService:
                 lines.append("Model nomi: ro'yxatda bor.")
             else:
                 lines.append("Model nomi: RO'YXATDA YO'Q. Quyidagilardan birini GEMINI_MODEL ga yozing:")
-            flash = [i for i in gem if "flash" in i][:12] or gem[:12]
+            flash = [i for i in gem if "flash" in i and "audio" not in i and "tts" not in i][:40] or gem[:40]
             lines += [f"  • {i}" for i in flash]
         except openai.OpenAIError as exc:
             lines.append(f"Kalit tekshiruvi xatosi: {self._describe(exc)}")
