@@ -48,6 +48,12 @@ class Settings(BaseSettings):
 
     # --- Gemini (Google AI Studio, OpenAI-mos endpoint orqali) ---
     gemini_model: str = Field(default="", alias="GEMINI_MODEL")
+    # Asosiy model band yoki ishlamasa, navbat bilan sinab ko'riladigan modellar (vergul bilan).
+    gemini_fallback_models: str = Field(
+        default="gemini-flash-latest,gemini-3.1-flash-lite", alias="GEMINI_FALLBACK_MODELS"
+    )
+    # Gemini "o'ylash" darajasi: none | low | medium | high. Bo'sh — model standarti.
+    ai_reasoning_effort: str = Field(default="low", alias="AI_REASONING_EFFORT")
     gemini_base_url: str = Field(
         default="https://generativelanguage.googleapis.com/v1beta/openai/", alias="GEMINI_BASE_URL"
     )
@@ -58,7 +64,7 @@ class Settings(BaseSettings):
 
     # --- Umumiy AI cheklovlari (ikkala provayder uchun) ---
     openai_timeout_seconds: float = Field(
-        default=90.0,
+        default=60.0,
         ge=5,
         le=600,
         validation_alias=AliasChoices("AI_TIMEOUT_SECONDS", "OPENAI_TIMEOUT_SECONDS"),
@@ -148,6 +154,14 @@ class Settings(BaseSettings):
             raise ValueError("AI_PROVIDER faqat 'gemini' yoki 'openai' bo'lishi mumkin")
         return value
 
+    @field_validator("ai_reasoning_effort")
+    @classmethod
+    def _validate_effort(cls, value: str) -> str:
+        value = value.strip().lower()
+        if value not in {"", "none", "low", "medium", "high"}:
+            raise ValueError("AI_REASONING_EFFORT: none, low, medium yoki high")
+        return value
+
     @field_validator("daily_research_time")
     @classmethod
     def _validate_time(cls, value: str) -> str:
@@ -197,6 +211,16 @@ class Settings(BaseSettings):
     def ai_api_key(self) -> str:
         key = self.gemini_api_key if self.ai_provider == "gemini" else self.openai_api_key
         return key.get_secret_value()
+
+    @property
+    def gemini_models(self) -> list[str]:
+        """Asosiy model va zaxira modellar (takrorlanmasdan, tartib bilan)."""
+        models: list[str] = []
+        for name in [self.gemini_model, *self.gemini_fallback_models.split(",")]:
+            name = name.strip().removeprefix("models/")
+            if name and name not in models:
+                models.append(name)
+        return models
 
     @property
     def ai_model(self) -> str:

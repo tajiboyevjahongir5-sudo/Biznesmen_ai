@@ -14,11 +14,13 @@ from app.database import repository as repo
 from app.database.models import BusinessProject, ProjectStatus
 from app.services.ai_service import (
     AIBadResponseError,
+    AIBusyError,
     AIConfigError,
     AIQuotaExceededError,
     AIRateLimitedError,
     AIResult,
     AIService,
+    AIServiceError,
     AITimeoutError,
     AIUnavailableError,
     GlobalLimitError,
@@ -245,12 +247,14 @@ async def test_interviewer_enforces_question_limits():
     assert late.ready_for_analysis  # cheksiz savol berilmaydi
 
 
-def _gemini_service(settings, create_mock) -> AIService:
+def _gemini_service(settings, create_mock, fallbacks: str = "") -> AIService:
     settings.ai_provider = "gemini"
     settings.gemini_api_key = "AIzaFakeGeminiKey_123456"
     settings.gemini_model = "gemini-test"
+    settings.gemini_fallback_models = fallbacks
     client = MagicMock()
     client.chat.completions.create = create_mock
+    client.with_options = MagicMock(return_value=client)
     return AIService(settings, client=client)
 
 
@@ -311,3 +315,56 @@ async def test_diagnose_reports_missing_model_and_hides_key(settings):
     assert "gemini-2.5-flash" in text
     assert "status=404" in text
     assert key not in text
+
+
+def _busy() -> openai.InternalServerError:
+    return openai.InternalServerError("high demand", response=_resp(503), body=None)
+
+
+async def test_gemini_falls_back_to_next_model_when_busy(settings):
+    ok = _completion(_step().model_dump_json())
+    create = AsyncMock(side_effect=[_busy(), openai.APITimeoutError(request=REQ), ok])
+    ai = _gemini_service(settings, create, fallbacks="gemini-b, gemini-c,gemini-test")
+    out = await ai.structured(user_id=1, agent="t", instructions="i", user_input="u", schema=InterviewStep)
+    assert out == _step()
+    models = [c.kwargs["model"] for c in create.call_args_list]
+    assert models == ["gemini-test", "gemini-b", "gemini-c"]  # takror model qayta sinalmaydi
+    assert all(c.kwargs["reasoning_effort"] == "low" for c in create.call_args_list)
+
+
+async def test_gemini_all_models_busy_gives_busy_message(settings):
+    create = AsyncMock(side_effect=[_busy(), _busy()])
+    ai = _gemini_service(settings, create, fallbacks="gemini-b")
+    with pytest.raises(AIBusyError) as info:
+        await ai.structured(user_id=1, agent="t", instructions="i", user_input="u", schema=InterviewStep)
+    assert "band" in info.value.user_message
+
+
+async def test_gemini_bad_request_not_retried_on_other_models(settings):
+    bad = openai.BadRequestError("invalid argument", response=_resp(400), body=None)
+    create = AsyncMock(side_effect=bad)
+    ai = _gemini_service(settings, create, fallbacks="gemini-b")
+    with pytest.raises(AIServiceError):
+        await ai.structured(user_id=1, agent="t", instructions="i", user_input="u", schema=InterviewStep)
+    assert create.call_count == 1
+
+
+async def test_gemini_reasoning_effort_dropped_if_unsupported(settings):
+    ok = _completion(_step().model_dump_json())
+    bad = openai.BadRequestError("Unknown name reasoning_effort", response=_resp(400), body=None)
+    create = AsyncMock(side_effect=[bad, ok, ok])
+    ai = _gemini_service(settings, create)
+    call = dict(user_id=1, agent="t", instructions="i", user_input="u", schema=InterviewStep)
+    await ai.structured(**call)
+    await ai.structured(**call)
+    assert "reasoning_effort" not in create.call_args_list[1].kwargs
+    assert "reasoning_effort" not in create.call_args_list[2].kwargs  # keyin umuman yuborilmaydi
+
+
+def test_gemini_models_list_and_effort_validation(settings):
+    from app.config import Settings
+
+    s = Settings(_env_file=None, GEMINI_MODEL="models/a", GEMINI_FALLBACK_MODELS=" b ,a,, c")
+    assert s.gemini_models == ["a", "b", "c"]
+    with pytest.raises(ValueError):
+        Settings(_env_file=None, AI_REASONING_EFFORT="turbo")

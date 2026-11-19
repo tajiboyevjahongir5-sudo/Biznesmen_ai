@@ -53,6 +53,10 @@ class AIRateLimitedError(AIServiceError):
     user_message = "AI xizmati hozir band. Bir daqiqadan so'ng qayta urinib ko'ring."
 
 
+class AIBusyError(AIServiceError):
+    user_message = "AI modeli hozir juda band. Iltimos, 1-2 daqiqadan keyin qayta yozing."
+
+
 class AIQuotaExceededError(AIServiceError):
     user_message = "AI xizmatining limiti tugagan. Administrator API balansini tekshirishi kerak."
 
@@ -146,6 +150,7 @@ class AIService:
     ) -> None:
         self._settings = settings
         self._client = client
+        self._reasoning_unsupported = False
         self.usage = usage or UsageTracker(
             per_user_limit=settings.ai_daily_requests_per_user,
             global_limit=settings.ai_daily_requests_global,
@@ -253,6 +258,8 @@ class AIService:
             raise AIConfigError from exc
         except openai.APIStatusError as exc:
             self._log_failure(agent, user_id, exc)
+            if exc.status_code in (503, 529):
+                raise AIBusyError from exc
             if exc.status_code >= 500:
                 raise AIUnavailableError from exc
             raise AIServiceError from exc
@@ -325,29 +332,30 @@ class AIService:
         except openai.OpenAIError as exc:
             lines.append(f"Sinov so'rovi xatosi: {self._describe(exc)}")
 
-        # 3) Bot ishlatadigan JSON rejimi (vaqti bilan)
-        started = time.perf_counter()
-        try:
-            resp = await client.with_options(max_retries=0).chat.completions.create(
-                model=s.ai_model,
-                messages=[
-                    {"role": "system", "content": 'Faqat JSON qaytar: {"ok": true}'},
-                    {"role": "user", "content": "Sinov"},
-                ],
-                response_format={"type": "json_object"},
-                max_tokens=s.openai_max_output_tokens,
-            )
-            secs = time.perf_counter() - started
-            choice = resp.choices[0] if resp.choices else None
-            content = (choice.message.content or "").strip() if choice else ""
-            reason = getattr(choice, "finish_reason", None)
-            lines.append(
-                f"JSON rejimi: javob {secs:.1f} s da keldi, finish_reason={reason}, "
-                f"matn={'bor' if content else 'BO`SH'}."
-            )
-        except openai.OpenAIError as exc:
-            secs = time.perf_counter() - started
-            lines.append(f"JSON rejimi xatosi ({secs:.1f} s): {self._describe(exc)}")
+        # 3) Bot ishlatadigan JSON rejimi — har bir model (asosiy + zaxira) alohida, vaqti bilan
+        models = s.gemini_models if s.ai_provider == "gemini" else [s.ai_model]
+        lines.append(f"O'ylash darajasi (AI_REASONING_EFFORT): {s.ai_reasoning_effort or 'standart'}")
+        for model in models:
+            started = time.perf_counter()
+            try:
+                resp = await self._gemini_create(
+                    client,
+                    model,
+                    messages=[
+                        {"role": "system", "content": 'Faqat JSON qaytar: {"ok": true}'},
+                        {"role": "user", "content": "Sinov"},
+                    ],
+                    response_format={"type": "json_object"},
+                    max_tokens=s.openai_max_output_tokens,
+                )
+                secs = time.perf_counter() - started
+                choice = resp.choices[0] if resp.choices else None
+                content = (choice.message.content or "").strip() if choice else ""
+                state = "ISHLAYDI" if content else "javob BO`SH"
+                lines.append(f"JSON [{model}]: {state}, {secs:.1f} s")
+            except openai.OpenAIError as exc:
+                secs = time.perf_counter() - started
+                lines.append(f"JSON [{model}] xatosi ({secs:.1f} s): {self._describe(exc)}")
         return lines
 
     def _describe(self, exc: BaseException) -> str:
@@ -356,6 +364,39 @@ class AIService:
         message = str(getattr(exc, "message", "") or exc)
         message = redact(message, self._settings.secret_values())[:300]
         return f"{type(exc).__name__} status={status}: {message}"
+
+    async def _gemini_create(self, client: openai.AsyncOpenAI, model: str, **kwargs):
+        """Bitta modelga bitta so'rov. `reasoning_effort` qo'llab-quvvatlanmasa, usiz qayta yuboradi."""
+        effort = self._settings.ai_reasoning_effort
+        one_shot = client.with_options(max_retries=0)
+        if effort and not self._reasoning_unsupported:
+            try:
+                return await one_shot.chat.completions.create(model=model, reasoning_effort=effort, **kwargs)
+            except openai.BadRequestError as exc:
+                if "reasoning" not in str(getattr(exc, "message", "")).lower():
+                    raise
+                self._reasoning_unsupported = True
+                logger.info("reasoning_effort qo'llab-quvvatlanmadi, usiz davom etiladi")
+        return await one_shot.chat.completions.create(model=model, **kwargs)
+
+    async def _gemini_with_fallback(self, client: openai.AsyncOpenAI, **kwargs):
+        """Asosiy model band/sekin/mavjud bo'lmasa, GEMINI_FALLBACK_MODELS dagi keyingisiga o'tadi."""
+        last_exc: BaseException | None = None
+        for model in self._settings.gemini_models:
+            try:
+                return await self._gemini_create(client, model, **kwargs)
+            except _FALLBACK_ERRORS as exc:
+                if isinstance(exc, openai.APIStatusError) and not _is_retryable_status(exc):
+                    raise
+                last_exc = exc
+                logger.warning(
+                    "gemini_model_failed model=%s error=%s status=%s — keyingi modelga o'tiladi",
+                    model,
+                    type(exc).__name__,
+                    getattr(exc, "status_code", None),
+                )
+        assert last_exc is not None
+        raise last_exc
 
     async def _call_gemini(
         self, client: openai.AsyncOpenAI, instructions: str, user_input: str, schema: type[T], limit: int
@@ -371,14 +412,12 @@ class AIService:
             f"qaytar. Markdown, izoh yoki ``` belgisi yozma. Matn chegaralariga (maxLength) rioya qil.\n"
             f"{schema_json}"
         )
-        completion = await client.chat.completions.create(
-            model=self._settings.ai_model,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user_input},
-            ],
-            response_format={"type": "json_object"},
-            max_tokens=limit,
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_input},
+        ]
+        completion = await self._gemini_with_fallback(
+            client, messages=messages, response_format={"type": "json_object"}, max_tokens=limit
         )
         choice = completion.choices[0] if completion.choices else None
         content = (choice.message.content or "") if choice else ""
@@ -439,6 +478,21 @@ def extract_citations(response: object, limit: int = 12) -> list[Source]:
                 if len(seen) >= limit:
                     return list(seen.values())
     return list(seen.values())
+
+
+# Bu xatolarda boshqa (zaxira) modelga o'tish mantiqli.
+_FALLBACK_ERRORS = (
+    openai.APITimeoutError,
+    openai.APIConnectionError,
+    openai.RateLimitError,
+    openai.NotFoundError,
+    openai.InternalServerError,
+    openai.APIStatusError,
+)
+
+
+def _is_retryable_status(exc: openai.APIStatusError) -> bool:
+    return exc.status_code in (404, 429) or exc.status_code >= 500
 
 
 _FENCE_RE = re.compile(r"^\s*```(?:json)?\s*|\s*```\s*$", re.IGNORECASE)

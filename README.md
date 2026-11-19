@@ -74,6 +74,8 @@ notepad .env
 2. **GEMINI_API_KEY** — https://aistudio.google.com/apikey dan oling (Google hisobingiz bilan).
    Bepul tarifda kunlik so'rovlar limiti bor; ko'p foydalanuvchi bo'lsa, AI Studio'da billing yoqiladi.
 3. **GEMINI_MODEL** — AI Studio'da ko'rsatilgan joriy model nomi. Kodga qattiq yozilmagan.
+   Model band (503) bo'lsa, bot `GEMINI_FALLBACK_MODELS` dagi zaxira modellarga avtomatik o'tadi;
+   `AI_REASONING_EFFORT=low` javobni tezlashtiradi. Admin `/aitest` har bir modelni alohida sinaydi.
 4. **ADMIN_IDS** — o'z Telegram ID ingiz (masalan, @userinfobot orqali bilib olasiz).
 
 OpenAI ishlatmoqchi bo'lsangiz: `AI_PROVIDER=openai`, `OPENAI_API_KEY`, `OPENAI_MODEL`.
