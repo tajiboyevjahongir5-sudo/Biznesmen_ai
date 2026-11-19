@@ -104,6 +104,7 @@ async def admin_home(message: Message, ctx: AppContext) -> None:
         f"To'lov tizimi: {'sozlangan' if s.payments_configured else 'sozlanmagan'}",
         "",
         "<b>Buyruqlar</b>",
+        "/aitest — AI kaliti va modelini tekshirish",
         "/research — izlanishni hozir boshlash",
         "/ideas — qoralama g'oyalar",
         "/publish id · /reject id",
@@ -114,6 +115,14 @@ async def admin_home(message: Message, ctx: AppContext) -> None:
         "/settings — kanal, karta, narx va boshqa sozlamalar",
     ]
     await message.answer("\n".join(lines))
+
+
+@router.message(Command("aitest"))
+async def aitest_cmd(message: Message, ctx: AppContext) -> None:
+    """AI kaliti va modelini tekshiradi, mavjud model nomlarini ko'rsatadi."""
+    await message.answer("AI ulanishini tekshiryapman...")
+    lines = await ctx.ai.diagnose()
+    await message.answer("<b>AI DIAGNOSTIKA</b>\n\n" + "\n".join(e(x) for x in lines))
 
 
 @router.message(Command("research"))

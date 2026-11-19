@@ -23,7 +23,7 @@ import openai
 from pydantic import BaseModel, ValidationError
 
 from app.config import Settings
-from app.core.logging import user_ref
+from app.core.logging import redact, user_ref
 
 logger = logging.getLogger(__name__)
 
@@ -290,6 +290,49 @@ class AIService:
         sources = extract_citations(response) if use_web else []
         return AIResult(data=parsed, sources=sources, web_used=use_web)
 
+    async def diagnose(self) -> list[str]:
+        """Admin uchun: kalit/model holatini tekshiradi. Kalit qiymati hech qachon chiqmaydi."""
+        s = self._settings
+        lines = [f"Provayder: {s.ai_provider}", f"Model: {s.ai_model or '(kiritilmagan)'}"]
+        try:
+            client = self._get_client()
+        except AIConfigError:
+            return [*lines, "Kalit yoki model nomi kiritilmagan."]
+
+        # 1) Kalit ishlaydimi va qaysi modellar mavjud
+        try:
+            page = await client.models.list()
+            ids = sorted({str(m.id).removeprefix("models/") for m in page.data})
+            gem = [i for i in ids if "gemini" in i or s.ai_provider == "openai"]
+            lines.append(f"Kalit: ishlaydi. Mavjud modellar soni: {len(ids)}")
+            if s.ai_model.removeprefix("models/") in ids:
+                lines.append("Model nomi: ro'yxatda bor.")
+            else:
+                lines.append("Model nomi: RO'YXATDA YO'Q. Quyidagilardan birini GEMINI_MODEL ga yozing:")
+            flash = [i for i in gem if "flash" in i][:12] or gem[:12]
+            lines += [f"  • {i}" for i in flash]
+        except openai.OpenAIError as exc:
+            lines.append(f"Kalit tekshiruvi xatosi: {self._describe(exc)}")
+
+        # 2) Haqiqiy kichik so'rov
+        try:
+            await client.chat.completions.create(
+                model=s.ai_model,
+                messages=[{"role": "user", "content": "Faqat OK deb javob ber."}],
+                max_tokens=20,
+            )
+            lines.append("Sinov so'rovi: MUVAFFAQIYATLI.")
+        except openai.OpenAIError as exc:
+            lines.append(f"Sinov so'rovi xatosi: {self._describe(exc)}")
+        return lines
+
+    def _describe(self, exc: BaseException) -> str:
+        """Xato turi, HTTP status va API xabarining qisqa, tozalangan matni."""
+        status = getattr(exc, "status_code", None)
+        message = str(getattr(exc, "message", "") or exc)
+        message = redact(message, self._settings.secret_values())[:300]
+        return f"{type(exc).__name__} status={status}: {message}"
+
     async def _call_gemini(
         self, client: openai.AsyncOpenAI, instructions: str, user_input: str, schema: type[T], limit: int
     ) -> SimpleNamespace:
@@ -329,14 +372,17 @@ class AIService:
 
     @staticmethod
     def _log_failure(agent: str, user_id: int, exc: BaseException) -> None:
-        # Faqat xato turi va status — so'rov matni yoki kalit loglanmaydi.
+        # Xato turi, status va API xabari (provayder matni) — foydalanuvchi matni loglanmaydi.
+        # Kalitlar root logger filtri orqali baribir yashiriladi.
         status = getattr(exc, "status_code", None)
+        detail = str(getattr(exc, "message", "") or "")[:200] if status else ""
         logger.warning(
-            "ai_call_failed agent=%s user=%s error=%s status=%s",
+            "ai_call_failed agent=%s user=%s error=%s status=%s detail=%s",
             agent,
             user_ref(user_id),
             type(exc).__name__,
             status,
+            detail,
         )
 
 

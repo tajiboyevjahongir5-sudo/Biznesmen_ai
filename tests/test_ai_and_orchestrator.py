@@ -288,3 +288,25 @@ async def test_gemini_never_uses_web_search(settings):
         user_id=1, agent="t", instructions="i", user_input="u", schema=InterviewStep, web_search=True
     )
     assert not res.web_used and res.sources == []
+
+
+async def test_diagnose_reports_missing_model_and_hides_key(settings):
+    settings.ai_provider = "gemini"
+    key = "AIzaFakeGeminiKey_1234567890abcdef"
+    settings.gemini_api_key = key
+    settings.gemini_model = "gemini-old"
+    client = MagicMock()
+    client.models.list = AsyncMock(
+        return_value=SimpleNamespace(
+            data=[SimpleNamespace(id="models/gemini-2.5-flash"), SimpleNamespace(id="models/gemini-2.5-pro")]
+        )
+    )
+    client.chat.completions.create = AsyncMock(
+        side_effect=openai.NotFoundError(f"model not found for key {key}", response=_resp(404), body=None)
+    )
+    lines = await AIService(settings, client=client).diagnose()
+    text = "\n".join(lines)
+    assert "RO'YXATDA YO'Q" in text
+    assert "gemini-2.5-flash" in text
+    assert "status=404" in text
+    assert key not in text
