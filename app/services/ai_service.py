@@ -10,10 +10,13 @@ Vazifalari:
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
+from types import SimpleNamespace
 from typing import TypeVar
 
 import openai
@@ -153,12 +156,13 @@ class AIService:
 
     def _get_client(self) -> openai.AsyncOpenAI:
         if self._client is None:
-            key = self._settings.openai_api_key.get_secret_value()
-            if not key or not self._settings.openai_model:
+            key = self._settings.ai_api_key
+            if not key or not self._settings.ai_model:
                 raise AIConfigError
+            # Gemini ham OpenAI-mos endpoint orqali shu SDK bilan ishlaydi.
             self._client = openai.AsyncOpenAI(
                 api_key=key,
-                base_url=self._settings.openai_base_url or None,
+                base_url=self._settings.ai_base_url or None,
                 timeout=self._settings.openai_timeout_seconds,
                 max_retries=self._settings.openai_max_retries,
             )
@@ -220,15 +224,18 @@ class AIService:
         extra: dict = {"tools": [{"type": "web_search"}]} if use_web else {}
         started = time.perf_counter()
         try:
-            response = await client.responses.parse(
-                model=self._settings.openai_model,
-                instructions=instructions,
-                input=[{"role": "user", "content": user_input}],
-                text_format=schema,
-                max_output_tokens=limit,
-                store=False,
-                **extra,
-            )
+            if self._settings.ai_provider == "gemini":
+                response = await self._call_gemini(client, instructions, user_input, schema, limit)
+            else:
+                response = await client.responses.parse(
+                    model=self._settings.ai_model,
+                    instructions=instructions,
+                    input=[{"role": "user", "content": user_input}],
+                    text_format=schema,
+                    max_output_tokens=limit,
+                    store=False,
+                    **extra,
+                )
         except openai.APITimeoutError as exc:
             self._log_failure(agent, user_id, exc)
             raise AITimeoutError from exc
@@ -283,6 +290,43 @@ class AIService:
         sources = extract_citations(response) if use_web else []
         return AIResult(data=parsed, sources=sources, web_used=use_web)
 
+    async def _call_gemini(
+        self, client: openai.AsyncOpenAI, instructions: str, user_input: str, schema: type[T], limit: int
+    ) -> SimpleNamespace:
+        """Gemini (OpenAI-mos Chat Completions): JSON rejimi + Pydantic tekshiruvi.
+
+        Natija `responses.parse` javobi bilan bir xil shaklga keltiriladi
+        (`output_parsed`, `usage.input_tokens/output_tokens`).
+        """
+        schema_json = json.dumps(schema.model_json_schema(), ensure_ascii=False)
+        system = (
+            f"{instructions}\n\nJAVOB FORMATI: faqat quyidagi JSON Schema ga mos bitta JSON obyekt "
+            f"qaytar. Markdown, izoh yoki ``` belgisi yozma. Matn chegaralariga (maxLength) rioya qil.\n"
+            f"{schema_json}"
+        )
+        completion = await client.chat.completions.create(
+            model=self._settings.ai_model,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user_input},
+            ],
+            response_format={"type": "json_object"},
+            max_tokens=limit,
+        )
+        choice = completion.choices[0] if completion.choices else None
+        content = (choice.message.content or "") if choice else ""
+        usage = getattr(completion, "usage", None)
+        parsed = schema.model_validate_json(_strip_json_fence(content)) if content.strip() else None
+        return SimpleNamespace(
+            output_parsed=parsed,
+            output=[],
+            status=getattr(choice, "finish_reason", None),
+            usage=SimpleNamespace(
+                input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
+                output_tokens=getattr(usage, "completion_tokens", 0) or 0,
+            ),
+        )
+
     @staticmethod
     def _log_failure(agent: str, user_id: int, exc: BaseException) -> None:
         # Faqat xato turi va status — so'rov matni yoki kalit loglanmaydi.
@@ -325,6 +369,14 @@ def extract_citations(response: object, limit: int = 12) -> list[Source]:
                 if len(seen) >= limit:
                     return list(seen.values())
     return list(seen.values())
+
+
+_FENCE_RE = re.compile(r"^\s*```(?:json)?\s*|\s*```\s*$", re.IGNORECASE)
+
+
+def _strip_json_fence(text: str) -> str:
+    """Model ba'zan JSON ni ```json ... ``` ichida qaytaradi — uni olib tashlaymiz."""
+    return _FENCE_RE.sub("", text.strip())
 
 
 def _error_code(exc: openai.APIStatusError) -> str | None:

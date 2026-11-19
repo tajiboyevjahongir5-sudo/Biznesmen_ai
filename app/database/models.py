@@ -184,6 +184,16 @@ class PaymentReservation(Base):
     confirmed_by: Mapped[str | None] = mapped_column(String(40))  # "auto" | "admin:<id>"
 
 
+class AppSetting(Base):
+    """Admin panel orqali kiritilgan sozlamalar."""
+
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
 class PaymentNotification(Base):
     """To'lov kanaliga kelgan bank xabari (audit uchun)."""
 

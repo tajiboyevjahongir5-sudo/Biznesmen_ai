@@ -12,6 +12,7 @@ from app.core.security import RateLimiter, UserLocks
 from app.services.ai_service import AIService
 from app.services.channel_service import ChannelService
 from app.services.payment_service import PaymentService
+from app.services.runtime_settings import RuntimeSettings
 
 
 @dataclass
@@ -24,4 +25,5 @@ class AppContext:
     channel: ChannelService
     rate_limiter: RateLimiter
     user_locks: UserLocks
+    runtime: RuntimeSettings
     bot_username: str = ""

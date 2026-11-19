@@ -30,6 +30,7 @@ from app.database.session import create_engine, create_session_factory, init_db
 from app.services.ai_service import AIService
 from app.services.channel_service import ChannelService
 from app.services.payment_service import PaymentService
+from app.services.runtime_settings import RuntimeSettings
 from app.services.scheduler import daily_research_loop, payment_sweeper_loop
 
 logger = logging.getLogger("app")
@@ -44,7 +45,7 @@ USER_COMMANDS = [
 ]
 
 
-def build_context(settings: Settings, session_factory) -> AppContext:
+def build_context(settings: Settings, session_factory, runtime: RuntimeSettings) -> AppContext:
     ai = AIService(settings)
     prompt_engineer = PromptEngineerAgent(ai)
     return AppContext(
@@ -65,6 +66,7 @@ def build_context(settings: Settings, session_factory) -> AppContext:
         channel=ChannelService(settings, session_factory, IdeaScoutAgent(ai), prompt_engineer),
         rate_limiter=RateLimiter(settings.rate_limit_messages, settings.rate_limit_window_seconds),
         user_locks=UserLocks(),
+        runtime=runtime,
     )
 
 
@@ -84,9 +86,9 @@ async def run() -> None:
 
     missing = settings.missing_required()
     if missing:
-        logger.error(".env faylida quyidagi sozlamalar to'ldirilmagan: %s", ", ".join(missing))
+        logger.error("Sozlamalar to'ldirilmagan (.env yoki Railway Variables): %s", ", ".join(missing))
         print(
-            "\nXATO: .env faylida quyidagilar to'ldirilmagan: "
+            "\nXATO: quyidagi sozlamalar to'ldirilmagan (.env yoki Railway Variables): "
             + ", ".join(missing)
             + "\n.env.example dan nusxa olib, qiymatlarni kiriting (README ga qarang).",
             file=sys.stderr,
@@ -95,7 +97,11 @@ async def run() -> None:
 
     engine = create_engine(settings.database_url)
     await init_db(engine)
-    ctx = build_context(settings, create_session_factory(engine))
+    session_factory = create_session_factory(engine)
+    runtime = RuntimeSettings(settings, session_factory)
+    loaded = await runtime.load()  # admin paneldan kiritilgan sozlamalar
+    logger.info("Admin sozlamalari yuklandi: %d ta", loaded)
+    ctx = build_context(settings, session_factory, runtime)
 
     bot = Bot(settings.bot_token.get_secret_value(), default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     me = await bot.get_me()
@@ -105,9 +111,7 @@ async def run() -> None:
     if not settings.admin_ids:
         logger.warning("ADMIN_IDS bo'sh: admin panel va to'lov ogohlantirishlari ishlamaydi")
     if not settings.payments_configured:
-        logger.warning(
-            "To'lov tizimi sozlanmagan (IDEAS_CHANNEL_ID, PAYMENT_CHANNEL_ID, PAYMENT_CARD_NUMBER)"
-        )
+        logger.warning("To'lov tizimi sozlanmagan: botda admin sifatida /settings yuborib kiriting")
     if not settings.web_search_enabled:
         logger.info("Internet qidiruvi o'chirilgan (RESEARCH_PROVIDER=none)")
 

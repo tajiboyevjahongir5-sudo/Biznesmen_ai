@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from datetime import UTC, datetime, timedelta
 
@@ -17,6 +18,7 @@ from app.core.text import e, format_money
 from app.database.models import PaymentReservation, PaymentStatus
 from app.services.payment_parser import parse_payment
 from app.services.payment_service import NoFreeAmountError
+from app.services.runtime_settings import CHANNEL_KINDS
 
 logger = logging.getLogger(__name__)
 router = Router(name="payment")
@@ -209,10 +211,49 @@ async def _notify_admins(bot: Bot, ctx: AppContext, text: str) -> None:
             logger.warning("admin_notify_failed")
 
 
+async def _try_link_channel(post: Message, ctx: AppContext, bot: Bot, code: str) -> None:
+    """Admin bergan bir martalik kod kanalga joylansa, o'sha kanalni ulaydi."""
+    pending = ctx.runtime.consume_link_code(code)
+    if pending is None:
+        return
+    key = CHANNEL_KINDS[pending.kind]
+    try:
+        me = await bot.get_me()
+        member = await bot.get_chat_member(post.chat.id, me.id)
+    except TelegramAPIError:
+        await bot.send_message(pending.admin_id, "Kanalni tekshirib bo'lmadi. Qayta urinib ko'ring.")
+        return
+    problems = []
+    if member.status != "administrator":
+        problems.append("bot kanalda admin emas")
+    elif pending.kind == "ideas":
+        if not getattr(member, "can_invite_users", False):
+            problems.append("botda 'Invite users via link' huquqi yo'q")
+        if not getattr(member, "can_post_messages", False):
+            problems.append("botda 'Post messages' huquqi yo'q")
+    if problems:
+        await bot.send_message(
+            pending.admin_id,
+            "Kanal ulanmadi: " + "; ".join(problems) + ". Huquqlarni berib, yangi kod oling.",
+        )
+        return
+    await ctx.runtime.set(key, str(post.chat.id))
+    with contextlib.suppress(TelegramAPIError):
+        await post.delete()
+    title = e(post.chat.title or str(post.chat.id))
+    name = "G'oyalar kanali" if pending.kind == "ideas" else "To'lov kanali"
+    await bot.send_message(pending.admin_id, f"{name} ulandi: <b>{title}</b> (<code>{post.chat.id}</code>)")
+    logger.info("channel_linked kind=%s", pending.kind)
+
+
 @channel_router.channel_post()
 async def payment_channel_post(post: Message, ctx: AppContext, bot: Bot) -> None:
-    """To'lov kanaliga kelgan bank xabarlarini kuzatadi. Faqat sozlangan kanal qabul qilinadi."""
+    """Kanal xabarlari: ulash kodi yoki to'lov kanalidagi bank xabari."""
     s = ctx.settings
+    text_raw = (post.text or "").strip()
+    if text_raw.upper().startswith("BMA-") and len(text_raw) <= 20:
+        await _try_link_channel(post, ctx, bot, text_raw)
+        return
     if not s.payment_channel_id or post.chat.id != s.payment_channel_id:
         return
     text = post.text or post.caption or ""

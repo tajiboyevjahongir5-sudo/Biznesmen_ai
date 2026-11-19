@@ -11,13 +11,18 @@ Buyruqlar:
 /block <tg_id>    — foydalanuvchini bloklash
 /unblock <tg_id>  — blokdan chiqarish
 /promo            — kanal reklamasini ko'rish
+/settings         — kanal, karta, narx sozlamalari (DB da saqlanadi)
 """
 
 from __future__ import annotations
 
+import contextlib
 import logging
+import re
+from datetime import timedelta
 
 from aiogram import Bot, F, Router
+from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command, CommandObject
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
@@ -28,6 +33,7 @@ from app.core.text import e, format_money
 from app.database import repository as repo
 from app.database.models import ChannelIdea, IdeaStatus
 from app.services.ai_service import AIServiceError
+from app.services.runtime_settings import SettingError, mask_card
 
 logger = logging.getLogger(__name__)
 router = Router(name="admin")
@@ -105,6 +111,7 @@ async def admin_home(message: Message, ctx: AppContext) -> None:
         "/confirm id — to'lovni qo'lda tasdiqlash",
         "/block tg_id · /unblock tg_id",
         "/promo — reklama ko'rinishi",
+        "/settings — kanal, karta, narx va boshqa sozlamalar",
     ]
     await message.answer("\n".join(lines))
 
@@ -137,7 +144,7 @@ async def list_drafts(message: Message, ctx: AppContext, bot: Bot) -> None:
 
 async def _publish(bot: Bot, ctx: AppContext, idea_id: int) -> str:
     if not ctx.settings.ideas_channel_id:
-        return "IDEAS_CHANNEL_ID sozlanmagan."
+        return "G'oyalar kanali ulanmagan: /link_ideas"
     try:
         idea = await ctx.channel.publish(bot, idea_id, ctx.bot_username)
     except Exception:  # noqa: BLE001
@@ -255,6 +262,173 @@ async def unblock_cmd(message: Message, command: CommandObject, ctx: AppContext)
     await message.answer(
         "Blokdan chiqarildi." if await _set_block(ctx, tg_id, False) else "Foydalanuvchi topilmadi."
     )
+
+
+# ------------------------------------------------------------------ sozlamalar
+
+SETTINGS_HELP = (
+    "<b>Sozlash buyruqlari</b>\n"
+    "/link_ideas — g'oyalar kanalini ulash (kod beriladi)\n"
+    "/link_payment — to'lov kanalini ulash (kod beriladi)\n"
+    "/card 8600123412341234 — karta raqami\n"
+    "/card_holder Ism Familiya — karta egasi\n"
+    "/price 50000 — kanalga kirish narxi (so'm)\n"
+    "/pay_minutes 5 — to'lov uchun vaqt (daqiqa)\n"
+    "/channel_title Nomi — kanal nomi (reklamada)\n"
+    "/daily_ideas 2 — kuniga nechta g'oya\n"
+    "/research_time 09:00 — kunlik izlanish vaqti\n"
+    "/autopublish on|off — g'oyalarni tasdiqsiz joylash"
+)
+
+
+@router.message(Command("settings"))
+async def settings_cmd(message: Message, ctx: AppContext) -> None:
+    s = ctx.settings
+
+    def ch(value: int | None) -> str:
+        return f"<code>{value}</code>" if value else "ulanmagan"
+
+    lines = [
+        "<b>JORIY SOZLAMALAR</b>",
+        "",
+        f"G'oyalar kanali: {ch(s.ideas_channel_id)}",
+        f"To'lov kanali: {ch(s.payment_channel_id)}",
+        f"Karta: {mask_card(s.payment_card_number)}",
+        f"Karta egasi: {e(s.payment_card_holder) or 'kiritilmagan'}",
+        f"Narx: {format_money(s.channel_price_uzs)} so'm",
+        f"To'lov vaqti: {s.payment_timeout_seconds // 60} daqiqa",
+        f"Kanal nomi: {e(s.ideas_channel_title)}",
+        f"Kunlik g'oyalar: {s.daily_ideas_count} ta, soat {s.daily_research_time} ({s.timezone})",
+        f"Avtomatik joylash: {'yoqilgan' if s.ideas_auto_publish else 'o`chirilgan'}",
+        f"To'lov tizimi: <b>{'tayyor' if s.payments_configured else 'to`liq sozlanmagan'}</b>",
+        "",
+        SETTINGS_HELP,
+    ]
+    await message.answer("\n".join(lines))
+
+
+async def _set(message: Message, ctx: AppContext, key: str, value: str, ok_text: str) -> None:
+    try:
+        await ctx.runtime.set(key, value)
+    except SettingError as exc:
+        await message.answer(f"Qabul qilinmadi: {e(str(exc))}")
+        return
+    # To'lov servisi ham yangi narx/vaqtdan foydalansin
+    ctx.payments.base_amount = ctx.settings.channel_price_uzs
+    ctx.payments.timeout = timedelta(seconds=ctx.settings.payment_timeout_seconds)
+    await message.answer(ok_text)
+
+
+def _arg(command: CommandObject) -> str:
+    return (command.args or "").strip()
+
+
+@router.message(Command("card"))
+async def card_cmd(message: Message, command: CommandObject, ctx: AppContext) -> None:
+    value = _arg(command)
+    if not value:
+        await message.answer("Masalan: /card 8600 1234 5678 9012")
+        return
+    await _set(message, ctx, "payment_card_number", value, "Karta saqlandi.")
+    # Karta raqami chatda qolmasligi uchun admin xabarini o'chirishga urinamiz
+    with contextlib.suppress(TelegramAPIError):
+        await message.delete()
+
+
+@router.message(Command("card_holder"))
+async def card_holder_cmd(message: Message, command: CommandObject, ctx: AppContext) -> None:
+    value = _arg(command)[:80]
+    if not value:
+        await message.answer("Masalan: /card_holder Aliyev Vali")
+        return
+    await _set(message, ctx, "payment_card_holder", value, "Karta egasi saqlandi.")
+
+
+@router.message(Command("price"))
+async def price_cmd(message: Message, command: CommandObject, ctx: AppContext) -> None:
+    value = re.sub(r"[ _.,]", "", _arg(command))
+    if not value.isdigit():
+        await message.answer("Masalan: /price 50000")
+        return
+    await _set(message, ctx, "channel_price_uzs", value, f"Narx: {format_money(int(value))} so'm.")
+
+
+@router.message(Command("pay_minutes"))
+async def pay_minutes_cmd(message: Message, command: CommandObject, ctx: AppContext) -> None:
+    value = _arg(command)
+    if not value.isdigit() or not 1 <= int(value) <= 60:
+        await message.answer("1 dan 60 gacha daqiqa kiriting. Masalan: /pay_minutes 5")
+        return
+    await _set(
+        message, ctx, "payment_timeout_seconds", str(int(value) * 60), f"To'lov vaqti: {value} daqiqa."
+    )
+
+
+@router.message(Command("channel_title"))
+async def channel_title_cmd(message: Message, command: CommandObject, ctx: AppContext) -> None:
+    value = _arg(command)[:100]
+    if not value:
+        await message.answer("Masalan: /channel_title BIZNES MIND g'oyalar")
+        return
+    await _set(message, ctx, "ideas_channel_title", value, "Kanal nomi saqlandi.")
+
+
+@router.message(Command("daily_ideas"))
+async def daily_ideas_cmd(message: Message, command: CommandObject, ctx: AppContext) -> None:
+    await _set(message, ctx, "daily_ideas_count", _arg(command) or "x", "Kunlik g'oyalar soni saqlandi.")
+
+
+@router.message(Command("research_time"))
+async def research_time_cmd(message: Message, command: CommandObject, ctx: AppContext) -> None:
+    await _set(
+        message,
+        ctx,
+        "daily_research_time",
+        _arg(command) or "x",
+        "Vaqt saqlandi. Yangi vaqt keyingi kundan (yoki bot qayta ishga tushganda) amal qiladi.",
+    )
+
+
+@router.message(Command("autopublish"))
+async def autopublish_cmd(message: Message, command: CommandObject, ctx: AppContext) -> None:
+    value = _arg(command).lower()
+    if value not in {"on", "off"}:
+        await message.answer("Masalan: /autopublish on yoki /autopublish off")
+        return
+    await _set(
+        message,
+        ctx,
+        "ideas_auto_publish",
+        "true" if value == "on" else "false",
+        f"Avtomatik joylash: {value}.",
+    )
+
+
+async def _link(message: Message, ctx: AppContext, kind: str) -> None:
+    code = ctx.runtime.create_link_code(kind, message.from_user.id)
+    name = "g'oyalar (pullik)" if kind == "ideas" else "to'lov (bank xabarlari)"
+    rights = (
+        "admin qiling va 'Post messages' hamda 'Invite users via link' huquqlarini bering"
+        if kind == "ideas"
+        else "admin qiling"
+    )
+    await message.answer(
+        f"<b>{name.capitalize()} kanalini ulash</b>\n\n"
+        f"1. Botni shu kanalga {rights}.\n"
+        f"2. Kanalga quyidagi kodni post qiling (10 daqiqa amal qiladi):\n\n"
+        f"<code>{code}</code>\n\n"
+        "Bot kodni ko'rib, kanalni ulaydi va sizga xabar beradi."
+    )
+
+
+@router.message(Command("link_ideas"))
+async def link_ideas_cmd(message: Message, ctx: AppContext) -> None:
+    await _link(message, ctx, "ideas")
+
+
+@router.message(Command("link_payment"))
+async def link_payment_cmd(message: Message, ctx: AppContext) -> None:
+    await _link(message, ctx, "payment")
 
 
 @router.message(Command("promo"))

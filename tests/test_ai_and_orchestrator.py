@@ -243,3 +243,48 @@ async def test_interviewer_enforces_question_limits():
         user_id=1, idea="x", turns=[], questions_asked=12, min_questions=6, max_questions=12
     )
     assert late.ready_for_analysis  # cheksiz savol berilmaydi
+
+
+def _gemini_service(settings, create_mock) -> AIService:
+    settings.ai_provider = "gemini"
+    settings.gemini_api_key = "AIzaFakeGeminiKey_123456"
+    settings.gemini_model = "gemini-test"
+    client = MagicMock()
+    client.chat.completions.create = create_mock
+    return AIService(settings, client=client)
+
+
+def _completion(content: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content=content), finish_reason="stop")],
+        usage=SimpleNamespace(prompt_tokens=30, completion_tokens=20),
+    )
+
+
+async def test_gemini_structured_output(settings):
+    step = _step()
+    content = "```json\n" + step.model_dump_json() + "\n```"
+    ai = _gemini_service(settings, AsyncMock(return_value=_completion(content)))
+    out = await ai.structured(user_id=1, agent="t", instructions="i", user_input="u", schema=InterviewStep)
+    assert out == step
+    assert ai.usage.input_tokens == 30 and ai.usage.output_tokens == 20
+    kwargs = ai._client.chat.completions.create.call_args.kwargs
+    assert kwargs["model"] == "gemini-test"
+    assert kwargs["response_format"] == {"type": "json_object"}
+    assert "ready_for_analysis" in kwargs["messages"][0]["content"]  # schema tizim promptida
+    assert kwargs["messages"][1] == {"role": "user", "content": "u"}  # foydalanuvchi alohida
+
+
+async def test_gemini_invalid_json_is_bad_response(settings):
+    ai = _gemini_service(settings, AsyncMock(return_value=_completion('{"intent": "nimadir"}')))
+    with pytest.raises(AIBadResponseError):
+        await ai.structured(user_id=1, agent="t", instructions="i", user_input="u", schema=InterviewStep)
+
+
+async def test_gemini_never_uses_web_search(settings):
+    settings.research_provider = "openai_web"
+    ai = _gemini_service(settings, AsyncMock(return_value=_completion(_step().model_dump_json())))
+    res = await ai.structured_with_sources(
+        user_id=1, agent="t", instructions="i", user_input="u", schema=InterviewStep, web_search=True
+    )
+    assert not res.web_used and res.sources == []

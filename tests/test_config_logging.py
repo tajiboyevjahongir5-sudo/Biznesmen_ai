@@ -17,8 +17,27 @@ def test_config_loads_and_hides_secrets(settings):
 def test_config_reports_missing_and_placeholders(monkeypatch):
     for key in ("BOT_TOKEN", "OPENAI_API_KEY", "OPENAI_MODEL"):
         monkeypatch.delenv(key, raising=False)
-    s = Settings(_env_file=None, BOT_TOKEN="CHANGE_ME_telegram_bot_token", OPENAI_MODEL="")
+    s = Settings(
+        _env_file=None, AI_PROVIDER="openai", BOT_TOKEN="CHANGE_ME_telegram_bot_token", OPENAI_MODEL=""
+    )
     assert set(s.missing_required()) == {"BOT_TOKEN", "OPENAI_API_KEY", "OPENAI_MODEL"}
+
+
+def test_gemini_is_default_provider(monkeypatch):
+    for key in ("AI_PROVIDER", "GEMINI_API_KEY", "GEMINI_MODEL", "OPENAI_API_KEY"):
+        monkeypatch.delenv(key, raising=False)
+    s = Settings(_env_file=None, BOT_TOKEN=FAKE_BOT_TOKEN)
+    assert s.ai_provider == "gemini"
+    assert set(s.missing_required()) == {"GEMINI_API_KEY", "GEMINI_MODEL"}
+    s2 = Settings(
+        _env_file=None, BOT_TOKEN=FAKE_BOT_TOKEN, GEMINI_API_KEY="AIzaFakeGeminiKey_123456", GEMINI_MODEL="g"
+    )
+    assert s2.missing_required() == []
+    assert s2.ai_base_url.startswith("https://generativelanguage.googleapis.com/")
+    assert "AIzaFakeGeminiKey_123456" in s2.secret_values()
+    # Internet qidiruvi faqat OpenAI bilan ishlaydi
+    s3 = Settings(_env_file=None, RESEARCH_PROVIDER="openai_web")
+    assert not s3.web_search_enabled
 
 
 def test_config_empty_channel_ids_are_none(monkeypatch):

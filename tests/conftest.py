@@ -20,6 +20,9 @@ def settings(monkeypatch) -> Settings:
         "PAYMENT_CHANNEL_ID",
         "PAYMENT_CARD_NUMBER",
         "RESEARCH_PROVIDER",
+        "AI_PROVIDER",
+        "GEMINI_API_KEY",
+        "GEMINI_MODEL",
     ):
         monkeypatch.delenv(key, raising=False)
     return Settings(
@@ -27,6 +30,7 @@ def settings(monkeypatch) -> Settings:
         BOT_TOKEN=FAKE_BOT_TOKEN,
         OPENAI_API_KEY=FAKE_OPENAI_KEY,
         OPENAI_MODEL="test-model",
+        AI_PROVIDER="openai",
         ADMIN_IDS="1001",
         LOG_FILE="",
     )

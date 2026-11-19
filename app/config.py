@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from functools import lru_cache
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PLACEHOLDER_MARKERS = ("change_me", "your_", "xxxx", "placeholder")
@@ -34,22 +34,54 @@ class Settings(BaseSettings):
         extra="ignore",
         case_sensitive=False,
         populate_by_name=True,
+        # Admin paneldan o'zgartirilgan qiymatlar ham validatorlardan o'tadi.
+        validate_assignment=True,
     )
 
     # --- Maxfiy kalitlar (faqat .env ichida) ---
     bot_token: SecretStr = Field(default=SecretStr(""), alias="BOT_TOKEN")
+    gemini_api_key: SecretStr = Field(default=SecretStr(""), alias="GEMINI_API_KEY")
     openai_api_key: SecretStr = Field(default=SecretStr(""), alias="OPENAI_API_KEY")
 
-    # --- OpenAI ---
+    # --- AI provayder: "gemini" (standart) yoki "openai" ---
+    ai_provider: str = Field(default="gemini", alias="AI_PROVIDER")
+
+    # --- Gemini (Google AI Studio, OpenAI-mos endpoint orqali) ---
+    gemini_model: str = Field(default="", alias="GEMINI_MODEL")
+    gemini_base_url: str = Field(
+        default="https://generativelanguage.googleapis.com/v1beta/openai/", alias="GEMINI_BASE_URL"
+    )
+
+    # --- OpenAI (ixtiyoriy) ---
     openai_model: str = Field(default="", alias="OPENAI_MODEL")
     openai_base_url: str | None = Field(default=None, alias="OPENAI_BASE_URL")
-    openai_timeout_seconds: float = Field(default=90.0, ge=5, le=600, alias="OPENAI_TIMEOUT_SECONDS")
-    openai_max_retries: int = Field(default=2, ge=0, le=5, alias="OPENAI_MAX_RETRIES")
-    openai_max_output_tokens: int = Field(default=4000, ge=200, le=32000, alias="OPENAI_MAX_OUTPUT_TOKENS")
+
+    # --- Umumiy AI cheklovlari (ikkala provayder uchun) ---
+    openai_timeout_seconds: float = Field(
+        default=90.0,
+        ge=5,
+        le=600,
+        validation_alias=AliasChoices("AI_TIMEOUT_SECONDS", "OPENAI_TIMEOUT_SECONDS"),
+    )
+    openai_max_retries: int = Field(
+        default=2, ge=0, le=5, validation_alias=AliasChoices("AI_MAX_RETRIES", "OPENAI_MAX_RETRIES")
+    )
+    openai_max_output_tokens: int = Field(
+        default=8000,
+        ge=200,
+        le=65000,
+        validation_alias=AliasChoices("AI_MAX_OUTPUT_TOKENS", "OPENAI_MAX_OUTPUT_TOKENS"),
+    )
     # Xarajatni taxminiy hisoblash uchun (USD / 1M token). 0 bo'lsa hisoblanmaydi.
-    openai_input_price_per_1m: float = Field(default=0.0, ge=0, alias="OPENAI_INPUT_PRICE_PER_1M")
-    openai_output_price_per_1m: float = Field(default=0.0, ge=0, alias="OPENAI_OUTPUT_PRICE_PER_1M")
-    # Internet qidiruvi: "none" yoki "openai_web" (OpenAI web_search tool, alohida pullik).
+    openai_input_price_per_1m: float = Field(
+        default=0.0, ge=0, validation_alias=AliasChoices("AI_INPUT_PRICE_PER_1M", "OPENAI_INPUT_PRICE_PER_1M")
+    )
+    openai_output_price_per_1m: float = Field(
+        default=0.0,
+        ge=0,
+        validation_alias=AliasChoices("AI_OUTPUT_PRICE_PER_1M", "OPENAI_OUTPUT_PRICE_PER_1M"),
+    )
+    # Internet qidiruvi: "none" yoki "openai_web" (faqat AI_PROVIDER=openai bilan, alohida pullik).
     research_provider: str = Field(default="none", alias="RESEARCH_PROVIDER")
 
     # --- Xarajat va suiiste'mol nazorati ---
@@ -108,6 +140,14 @@ class Settings(BaseSettings):
             raise ValueError("RESEARCH_PROVIDER faqat 'none' yoki 'openai_web' bo'lishi mumkin")
         return value
 
+    @field_validator("ai_provider")
+    @classmethod
+    def _validate_ai_provider(cls, value: str) -> str:
+        value = value.strip().lower()
+        if value not in {"gemini", "openai"}:
+            raise ValueError("AI_PROVIDER faqat 'gemini' yoki 'openai' bo'lishi mumkin")
+        return value
+
     @field_validator("daily_research_time")
     @classmethod
     def _validate_time(cls, value: str) -> str:
@@ -123,7 +163,7 @@ class Settings(BaseSettings):
             raise ValueError("PAYMENT_CARD_NUMBER 16-19 raqamdan iborat bo'lishi kerak")
         return digits
 
-    @field_validator("openai_model", "payment_amount_regex")
+    @field_validator("openai_model", "gemini_model", "payment_amount_regex")
     @classmethod
     def _strip(cls, value: str) -> str:
         return value.strip()
@@ -149,7 +189,21 @@ class Settings(BaseSettings):
 
     @property
     def web_search_enabled(self) -> bool:
-        return self.research_provider == "openai_web"
+        # OpenAI web_search vositasi faqat OpenAI provayderida mavjud.
+        return self.research_provider == "openai_web" and self.ai_provider == "openai"
+
+    @property
+    def ai_api_key(self) -> str:
+        key = self.gemini_api_key if self.ai_provider == "gemini" else self.openai_api_key
+        return key.get_secret_value()
+
+    @property
+    def ai_model(self) -> str:
+        return self.gemini_model if self.ai_provider == "gemini" else self.openai_model
+
+    @property
+    def ai_base_url(self) -> str | None:
+        return self.gemini_base_url if self.ai_provider == "gemini" else self.openai_base_url
 
     @property
     def payments_configured(self) -> bool:
@@ -157,7 +211,11 @@ class Settings(BaseSettings):
 
     def secret_values(self) -> list[str]:
         """Loglardan yashirilishi kerak bo'lgan qiymatlar ro'yxati."""
-        values = [self.bot_token.get_secret_value(), self.openai_api_key.get_secret_value()]
+        values = [
+            self.bot_token.get_secret_value(),
+            self.openai_api_key.get_secret_value(),
+            self.gemini_api_key.get_secret_value(),
+        ]
         return [v for v in values if v and len(v) >= 8]
 
     def missing_required(self) -> list[str]:
@@ -165,10 +223,11 @@ class Settings(BaseSettings):
         missing: list[str] = []
         if _is_placeholder(self.bot_token.get_secret_value()):
             missing.append("BOT_TOKEN")
-        if _is_placeholder(self.openai_api_key.get_secret_value()):
-            missing.append("OPENAI_API_KEY")
-        if not self.openai_model:
-            missing.append("OPENAI_MODEL")
+        prefix = "GEMINI" if self.ai_provider == "gemini" else "OPENAI"
+        if _is_placeholder(self.ai_api_key):
+            missing.append(f"{prefix}_API_KEY")
+        if not self.ai_model:
+            missing.append(f"{prefix}_MODEL")
         return missing
 
 
