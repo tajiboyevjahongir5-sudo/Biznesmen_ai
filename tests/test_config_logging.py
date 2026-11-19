@@ -1,5 +1,7 @@
 import logging
 
+import pytest
+
 from app.config import Settings
 from app.core.logging import REDACTED, SecretRedactingFilter, redact, user_ref
 from tests.conftest import FAKE_BOT_TOKEN, FAKE_OPENAI_KEY
@@ -85,3 +87,15 @@ def test_railway_postgres_url_normalized():
     assert s.database_url == "postgresql+asyncpg://u:p@host:5432/railway"
     s2 = Settings(_env_file=None, DATABASE_URL="postgres://u:p@h/db")
     assert s2.database_url.startswith("postgresql+asyncpg://")
+
+
+@pytest.mark.parametrize("url", ["", "   ", "${{Postgres.DATABASE_URL}}", "not a url", "mysql://u:p@h/db"])
+def test_bad_database_url_reported_clearly(url):
+    s = Settings(_env_file=None, DATABASE_URL=url)
+    assert any(m.startswith("DATABASE_URL") for m in s.missing_required())
+
+
+def test_quoted_database_url_accepted():
+    s = Settings(_env_file=None, DATABASE_URL='"postgresql://u:p@host:5432/railway"')
+    assert s.database_url == "postgresql+asyncpg://u:p@host:5432/railway"
+    assert not any(m.startswith("DATABASE_URL") for m in s.missing_required())

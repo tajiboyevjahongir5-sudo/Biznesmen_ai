@@ -172,7 +172,8 @@ class Settings(BaseSettings):
     @classmethod
     def _normalize_db_url(cls, value: str) -> str:
         """Railway/Heroku `postgresql://` URL ini async drayverga moslaydi."""
-        value = value.strip()
+        # Variables ga qo'shtirnoq bilan yozilgan bo'lsa, ularni olib tashlaymiz.
+        value = value.strip().strip("\"'").strip()
         for prefix in ("postgres://", "postgresql://"):
             if value.startswith(prefix):
                 return "postgresql+asyncpg://" + value[len(prefix) :]
@@ -228,7 +229,23 @@ class Settings(BaseSettings):
             missing.append(f"{prefix}_API_KEY")
         if not self.ai_model:
             missing.append(f"{prefix}_MODEL")
+        if not _valid_db_url(self.database_url):
+            missing.append("DATABASE_URL (bo'sh yoki noto'g'ri formatda)")
         return missing
+
+
+def _valid_db_url(url: str) -> bool:
+    """URL ni SQLAlchemy o'qiy oladimi (parol loglarga chiqmasligi uchun qiymat ko'rsatilmaydi)."""
+    from sqlalchemy.engine import make_url
+    from sqlalchemy.exc import ArgumentError
+
+    if not url or "${{" in url:
+        return False
+    try:
+        parsed = make_url(url)
+    except (ArgumentError, ValueError):
+        return False
+    return parsed.drivername in {"sqlite+aiosqlite", "postgresql+asyncpg"}
 
 
 def _is_placeholder(value: str) -> bool:
