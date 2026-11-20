@@ -26,7 +26,7 @@ from pydantic import BaseModel, ValidationError
 from app.config import Settings
 from app.core.logging import redact, user_ref
 from app.core.security import wrap_untrusted
-from app.services.gemini_native import GeminiNative, GeminiNativeError
+from app.services.gemini_native import GeminiNative, GeminiNativeError, GeneratedImage
 
 logger = logging.getLogger(__name__)
 
@@ -39,21 +39,22 @@ T = TypeVar("T", bound=BaseModel)
 
 
 class AIServiceError(Exception):
-    user_message = "AI xizmatida kutilmagan xatolik yuz berdi. Birozdan keyin qayta urinib ko'ring."
+    user_message = "😔 AI xizmatida kutilmagan xatolik yuz berdi. Birozdan keyin qayta urinib ko'ring."
 
 
 class AITimeoutError(AIServiceError):
-    user_message = "AI javob berishga ulgurmadi. Iltimos, birozdan keyin qayta urinib ko'ring."
+    user_message = "⏱ AI javob berishga ulgurmadi. Iltimos, birozdan keyin qayta urinib ko'ring."
 
 
 class AIUnavailableError(AIServiceError):
     user_message = (
-        "AI xizmatiga ulanib bo'lmadi (internet yoki server muammosi). Birozdan keyin qayta urinib ko'ring."
+        "📡 AI xizmatiga ulanib bo'lmadi (internet yoki server muammosi). "
+        "Birozdan keyin qayta urinib ko'ring."
     )
 
 
 class AIRateLimitedError(AIServiceError):
-    user_message = "AI xizmati hozir band. Bir daqiqadan so'ng qayta urinib ko'ring."
+    user_message = "⏳ AI xizmati hozir band. Bir daqiqadan so'ng qayta urinib ko'ring."
 
 
 class AIBusyError(AIServiceError):
@@ -64,11 +65,11 @@ class AIBusyError(AIServiceError):
 
 
 class AIQuotaExceededError(AIServiceError):
-    user_message = "AI xizmatining limiti tugagan. Administrator API balansini tekshirishi kerak."
+    user_message = "🔧 AI xizmatining limiti tugagan. Administrator API balansini tekshirishi kerak."
 
 
 class AIConfigError(AIServiceError):
-    user_message = "AI xizmati sozlanmagan. Administratorga murojaat qiling."
+    user_message = "🔧 AI xizmati sozlanmagan. Administratorga murojaat qiling."
 
 
 class AIBadResponseError(AIServiceError):
@@ -76,12 +77,12 @@ class AIBadResponseError(AIServiceError):
 
 
 class UsageLimitError(AIServiceError):
-    user_message = "Bugungi AI so'rovlar limitingiz tugadi. Ertaga qayta urinib ko'ring."
+    user_message = "📊 Bugungi AI so'rovlar limitingiz tugadi. Ertaga qayta urinib ko'ring."
 
 
 class GlobalLimitError(AIServiceError):
     user_message = (
-        "Bot bugungi umumiy AI limitiga yetdi. Xarajatlarni nazorat qilish uchun "
+        "📊 Bot bugungi umumiy AI limitiga yetdi. Xarajatlarni nazorat qilish uchun "
         "yangi so'rovlar ertaga qabul qilinadi."
     )
 
@@ -352,6 +353,19 @@ class AIService:
             self._log_failure("transcribe", user_id, exc)
             raise _map_native(exc) from exc
 
+    async def generate_image(self, prompt: str) -> GeneratedImage:
+        """Kanal posti uchun rasm (faqat Gemini). Global kunlik limitga kiradi."""
+        if self._settings.ai_provider != "gemini" or not self._settings.gemini_api_key.get_secret_value():
+            raise AIConfigError
+        self.usage.check_and_reserve(0)  # tizim chaqiruvi
+        try:
+            image = await self.native.generate_image(prompt)
+        except GeminiNativeError as exc:
+            self._log_failure("image", 0, exc)
+            raise _map_native(exc) from exc
+        logger.info("image_generated model=%s bytes=%d", image.model, len(image.data))
+        return image
+
     async def diagnose(self) -> list[str]:
         """Admin uchun: kalit/model holatini tekshiradi. Kalit qiymati hech qachon chiqmaydi."""
         s = self._settings
@@ -411,6 +425,17 @@ class AIService:
             except openai.OpenAIError as exc:
                 secs = time.perf_counter() - started
                 lines.append(f"JSON [{model}] xatosi ({secs:.1f} s): {self._describe(exc)}")
+
+        # 4) Kanal postlari uchun rasm modeli (so'rov yuborilmaydi — faqat ro'yxat, bepul)
+        if s.ai_provider == "gemini":
+            state = "yoqilgan" if s.post_images else "o'chiq"
+            try:
+                img_models = await self.native.image_models()
+                chosen = s.gemini_image_model or (img_models[0] if img_models else "topilmadi")
+                lines.append(f"Kanal rasmlari: {state}. Rasm modeli: {chosen}")
+                lines += [f"  • {m}" for m in img_models[:6]]
+            except GeminiNativeError as exc:
+                lines.append(f"Rasm modellari tekshiruvi xatosi: status={exc.status}")
         return lines
 
     def _describe(self, exc: BaseException) -> str:

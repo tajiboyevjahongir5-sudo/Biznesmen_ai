@@ -20,7 +20,7 @@ from app.core.finance import build_model
 from app.core.logging import user_ref
 from app.core.report import build_report_html
 from app.core.security import contains_sensitive_data, detect_prompt_injection, sanitize_user_text
-from app.core.text import e, render_prompt
+from app.core.text import SEP, e, render_prompt
 from app.database import repository as repo
 from app.services.ai_service import AIServiceError
 from app.services.channel_service import DEEP_LINK_PREFIX
@@ -29,30 +29,37 @@ logger = logging.getLogger(__name__)
 router = Router(name="user")
 
 HELP_TEXT = (
-    "<b>BIZNES MIND AI</b> — biznes g'oyangizni chuqur o'rganadigan maslahatchi.\n\n"
-    "Menga shunchaki g'oyangizni oddiy so'zlar bilan yozing. Men sizga birma-bir savollar "
-    "beraman, so'ng talab, raqobat va muvaffaqiyatsizlik sabablarini tahlil qilib, oxirida "
-    "boshqa AI larda ishlatish uchun tayyor SUPER PROMPT beraman.\n\n"
-    "Foydali buyruqlar:\n"
-    "/new — yangi g'oyani boshlash\n"
-    "/cancel — joriy suhbatni to'xtatish\n"
-    "/history — oldingi loyihalaringiz\n"
-    "/prompt <i>raqam</i> — loyiha promptini qayta olish\n"
-    "/report <i>raqam</i> — to'liq hisobot fayli\n"
-    "/delete <i>raqam</i> — loyihani o'chirish\n"
-    "/kanal — g'oyalar kanali haqida\n\n"
-    "<i>Hech qachon karta raqami, parol yoki SMS kodni yozmang — ular kerak emas.</i>"
+    "🧠 <b>BIZNES MIND AI</b>\n"
+    "━━━━━━━━━━━━━━━━\n"
+    "Biznes g'oyangizni chuqur o'rganadigan shaxsiy maslahatchingiz.\n\n"
+    "⚙️ <b>Qanday ishlaydi?</b>\n"
+    "1️⃣ G'oyangizni oddiy so'zlar bilan yozing yoki 🎙 aytib yuboring\n"
+    "2️⃣ Men birma-bir aniqlashtiruvchi savollar beraman\n"
+    "3️⃣ Talab, raqobat, xavflar va moliyaviy modelni tahlil qilaman\n"
+    "4️⃣ Oxirida istalgan AI da ishlatish uchun tayyor 🤖 <b>SUPER PROMPT</b> beraman\n\n"
+    "📋 <b>Buyruqlar</b>\n"
+    "🆕 /new — yangi g'oya\n"
+    "⏹ /cancel — joriy suhbatni to'xtatish\n"
+    "📂 /history — loyihalaringiz\n"
+    "🤖 /prompt <i>raqam</i> — promptni qayta olish\n"
+    "📄 /report <i>raqam</i> — to'liq hisobot fayli\n"
+    "🗑 /delete <i>raqam</i> — loyihani o'chirish\n"
+    "💎 /kanal — kunlik g'oyalar kanali\n\n"
+    "🔒 <i>Hech qachon karta raqami, parol yoki SMS kodni yozmang — ular kerak emas.</i>"
 )
 
 
 def _greeting(name: str | None) -> str:
-    who = f", {e(name)}" if name else ""
+    who = f", <b>{e(name)}</b>" if name else ""
     return (
-        f"Assalomu alaykum{who}. Men BIZNES MIND AI — biznes maslahatchingizman.\n\n"
+        f"👋 Assalomu alaykum{who}!\n\n"
+        "Men <b>BIZNES MIND AI</b> — shaxsiy biznes maslahatchingizman 💼\n\n"
         "Qanday biznes boshlamoqchisiz yoki qaysi g'oyani tekshirib ko'rmoqchisiz? "
-        "Bir-ikki gap bilan yozing, qolganini savollar orqali birga aniqlaymiz.\n\n"
-        "Agar hali aniq g'oyangiz bo'lmasa, shuni ayting — qaysi yo'nalishga qarash mumkinligini "
-        "gaplashamiz."
+        "Bir-ikki gap bilan yozing (yoki 🎙 aytib yuboring) — qolganini savollar orqali "
+        "birga aniqlaymiz.\n\n"
+        "💡 <i>Masalan: «Chilonzorda bolalar uchun robototexnika to'garagi ochmoqchiman»</i>\n\n"
+        "Hali aniq g'oya bo'lmasa ham mayli — qiziqishlaringizni ayting, yo'nalish topamiz. "
+        "Barcha imkoniyatlar: /help"
     )
 
 
@@ -62,12 +69,12 @@ async def start_idea_link(message: Message, command: CommandObject, ctx: AppCont
     idea_id = int(command.args.removeprefix(DEEP_LINK_PREFIX))
     tg_id = message.from_user.id
     if ctx.settings.ideas_channel_id and not await is_channel_member(bot, ctx, tg_id):
-        await message.answer("Bu g'oya promptlari faqat kanal a'zolari uchun. Kanalga qo'shilish shartlari:")
+        await message.answer("🔒 Bu g'oya prompti faqat kanal a'zolari uchun. Qo'shilish shartlari:")
         await maybe_send_promo(bot, ctx, tg_id, message.chat.id, force=True)
         return
     idea = await ctx.channel.get_prompt_for_request(idea_id)
     if idea is None:
-        await message.answer("Bu g'oya topilmadi yoki hali e'lon qilinmagan.")
+        await message.answer("🔍 Bu g'oya topilmadi yoki hali e'lon qilinmagan.")
         return
     logger.info("idea_prompt_sent user=%s idea=%d", user_ref(tg_id), idea_id)
     await send_parts(
@@ -81,8 +88,8 @@ async def start_idea_link(message: Message, command: CommandObject, ctx: AppCont
         ),
     )
     await message.answer(
-        "Agar shu g'oyani o'zingizga moslab chuqurroq tahlil qilmoqchi bo'lsangiz, "
-        "uni o'z so'zlaringiz bilan yozing — savollar bilan boshlaymiz."
+        "💬 Shu g'oyani o'zingizga moslab chuqurroq tahlil qilmoqchimisiz? "
+        "Uni o'z so'zlaringiz bilan yozing — savollar bilan boshlaymiz."
     )
 
 
@@ -99,15 +106,19 @@ async def help_cmd(message: Message) -> None:
 @router.message(Command("new"))
 async def new_cmd(message: Message, ctx: AppContext, db_user_id: int) -> None:
     await ctx.orchestrator.cancel_active(db_user_id)
-    await message.answer("Yaxshi, yangi loyihani boshlaymiz. Biznes g'oyangizni yozing.")
+    await message.answer(
+        "🆕 Yaxshi, yangi loyihani boshlaymiz!\n\nBiznes g'oyangizni yozing yoki 🎙 aytib yuboring."
+    )
 
 
 @router.message(Command("cancel"))
 async def cancel_cmd(message: Message, ctx: AppContext, db_user_id: int) -> None:
     if await ctx.orchestrator.cancel_active(db_user_id):
-        await message.answer("Joriy suhbat to'xtatildi. Yangi g'oya bo'lsa, istalgan payt yozing.")
+        await message.answer(
+            "⏹ Joriy suhbat to'xtatildi.\n\nYangi g'oya bo'lsa, istalgan payt yozing — men shu yerdaman."
+        )
     else:
-        await message.answer("Hozir faol suhbat yo'q.")
+        await message.answer("ℹ️ Hozir faol suhbat yo'q. G'oyangizni yozing — boshlaymiz!")
 
 
 @router.message(Command("history"))
@@ -115,23 +126,24 @@ async def history_cmd(message: Message, ctx: AppContext, db_user_id: int) -> Non
     async with ctx.session_factory() as session:
         projects = await repo.list_projects(session, db_user_id)
     if not projects:
-        await message.answer("Sizda hali loyihalar yo'q. G'oyangizni yozing — boshlaymiz.")
+        await message.answer(
+            "📂 Sizda hali loyihalar yo'q.\n\nG'oyangizni yozing — birinchi loyihani boshlaymiz! 🚀"
+        )
         return
     status_names = {
-        "interviewing": "suhbat davom etmoqda",
-        "analyzing": "tahlil qilinmoqda",
-        "done": "tayyor",
-        "failed": "xato",
-        "followup": "kuzatuvda",
-        "cancelled": "bekor qilingan",
+        "interviewing": ("💬", "suhbat davom etmoqda"),
+        "analyzing": ("⚙️", "tahlil qilinmoqda"),
+        "done": ("✅", "tayyor"),
+        "failed": ("❌", "xato"),
+        "followup": ("📈", "kuzatuvda"),
+        "cancelled": ("⏹", "bekor qilingan"),
     }
-    lines = ["<b>Loyihalaringiz</b>", ""]
+    lines = ["📂 <b>LOYIHALARINGIZ</b>", SEP]
     for p in projects:
-        lines.append(
-            f"<b>#{p.id}</b> {e(p.title[:90])}\n"
-            f"Holat: {status_names.get(p.status, p.status)} · {p.created_at:%d.%m.%Y}"
-        )
-    lines += ["", "Prompt: /prompt raqam · Hisobot: /report raqam · O'chirish: /delete raqam"]
+        icon, name = status_names.get(p.status, ("▫️", p.status))
+        lines += ["", f"{icon} <b>#{p.id}</b> · {e(p.title[:90])}"]
+        lines.append(f"<i>{name} · {p.created_at:%d.%m.%Y}</i>")
+    lines += ["", "🤖 /prompt <i>raqam</i> · 📄 /report <i>raqam</i> · 🗑 /delete <i>raqam</i>"]
     await message.answer("\n".join(lines))
 
 
@@ -150,12 +162,14 @@ async def prompt_cmd(
 ) -> None:
     project_id, _ = _parse_id(command.args)
     if project_id is None:
-        await message.answer("Loyiha raqamini yozing, masalan: /prompt 12")
+        await message.answer(
+            "ℹ️ Loyiha raqamini yozing, masalan: <code>/prompt 12</code>\nRaqamlar — /history da."
+        )
         return
     async with ctx.session_factory() as session:
         text = await repo.latest_prompt(session, db_user_id, project_id)
     if not text:
-        await message.answer("Bu raqamli tayyor loyiha topilmadi.")
+        await message.answer("🔍 Bu raqamli tayyor loyiha topilmadi. Ro'yxat — /history")
         return
     await send_parts(bot, message.chat.id, render_prompt(f"Loyiha #{project_id}", text, ""))
 
@@ -167,14 +181,16 @@ async def report_cmd(
     """Tayyor loyihaning to'liq hisobotini HTML fayl qilib qayta yuboradi."""
     project_id, _ = _parse_id(command.args)
     if project_id is None:
-        await message.answer("Loyiha raqamini yozing, masalan: /report 12 (raqamlar — /history da)")
+        await message.answer(
+            "ℹ️ Loyiha raqamini yozing, masalan: <code>/report 12</code>\nRaqamlar — /history da."
+        )
         return
     async with ctx.session_factory() as session:
         project = await repo.get_project(session, db_user_id, project_id)
         analysis_json = await repo.latest_analysis(session, db_user_id, project_id)
         prompt = await repo.latest_prompt(session, db_user_id, project_id)
     if project is None or not analysis_json or not prompt:
-        await message.answer("Bu raqamli tayyor loyiha topilmadi.")
+        await message.answer("🔍 Bu raqamli tayyor loyiha topilmadi. Ro'yxat — /history")
         return
     try:
         analysis = MarketAnalysis.model_validate_json(analysis_json)
@@ -199,28 +215,29 @@ async def report_cmd(
 async def delete_cmd(message: Message, command: CommandObject, ctx: AppContext, db_user_id: int) -> None:
     project_id, confirm = _parse_id(command.args)
     if project_id is None:
-        await message.answer("Loyiha raqamini yozing, masalan: /delete 12")
+        await message.answer("ℹ️ Loyiha raqamini yozing, masalan: <code>/delete 12</code>")
         return
     if confirm != "ha":
         await message.answer(
-            f"Loyiha #{project_id} va unga tegishli barcha suhbat, tahlil va promptlar "
-            f"butunlay o'chiriladi. Buni qaytarib bo'lmaydi.\n\n"
+            f"🗑 <b>Loyiha #{project_id} o'chirilsinmi?</b>\n\n"
+            "Unga tegishli barcha suhbat, tahlil va promptlar butunlay o'chiriladi. "
+            "⚠️ Buni qaytarib bo'lmaydi.\n\n"
             f"Tasdiqlash uchun yuboring: <code>/delete {project_id} ha</code>"
         )
         return
     async with ctx.session_factory() as session:
         ok = await repo.delete_project(session, db_user_id, project_id)
         await session.commit()
-    await message.answer("Loyiha butunlay o'chirildi." if ok else "Bu raqamli loyiha topilmadi.")
+    await message.answer("✅ Loyiha butunlay o'chirildi." if ok else "🔍 Bu raqamli loyiha topilmadi.")
 
 
 @router.message(Command("kanal"))
 async def channel_cmd(message: Message, ctx: AppContext, bot: Bot) -> None:
     if not ctx.settings.payments_configured:
-        await message.answer("G'oyalar kanali hozircha ishga tushirilmagan.")
+        await message.answer("💎 G'oyalar kanali hozircha ishga tushirilmagan. Tez orada!")
         return
     if await is_channel_member(bot, ctx, message.from_user.id):
-        await message.answer("Siz allaqachon kanal a'zosisiz.")
+        await message.answer("✅ Siz allaqachon kanal a'zosisiz.")
         return
     await maybe_send_promo(bot, ctx, message.from_user.id, message.chat.id, force=True)
 
@@ -265,7 +282,7 @@ async def voice_message(message: Message, ctx: AppContext, db_user_id: int, bot:
         await message.answer(exc.user_message)
         return
     except TelegramAPIError:
-        await message.answer("Ovozli xabarni yuklab bo'lmadi. Qayta yuboring.")
+        await message.answer("🎙 Ovozli xabarni yuklab bo'lmadi. Qayta yuboring.")
         return
     finally:
         await ctx.user_locks.release(tg_id)
@@ -290,9 +307,9 @@ async def _process_text(message: Message, ctx: AppContext, db_user_id: int, bot:
     text = check.text
     if contains_sensitive_data(text):
         await message.answer(
-            "Xabaringizda karta raqami, parol yoki maxfiy kodga o'xshash ma'lumot bor. "
-            "Xavfsizlik uchun uni saqlamadim. Iltimos, bunday ma'lumotlarni yozmang va "
-            "xabarni ularsiz qayta yuboring."
+            "🔒 <b>Xavfsizlik ogohlantirishi</b>\n\n"
+            "Xabaringizda karta raqami, parol yoki maxfiy kodga o'xshash ma'lumot bor — "
+            "uni saqlamadim. Iltimos, xabarni bunday ma'lumotlarsiz qayta yuboring."
         )
         return
     if detect_prompt_injection(text):
@@ -335,9 +352,11 @@ async def _process_text(message: Message, ctx: AppContext, db_user_id: int, bot:
 
 @router.message(F.text.startswith("/"))
 async def unknown_command(message: Message) -> None:
-    await message.answer("Bunday buyruq yo'q. Yordam uchun /help yuboring.")
+    await message.answer("🤔 Bunday buyruq yo'q. Barcha imkoniyatlar — /help")
 
 
 @router.message()
 async def non_text(message: Message) -> None:
-    await message.answer("Men matn va ovozli xabarlarni tushunaman. G'oyangizni yozing yoki aytib yuboring 🎙")
+    await message.answer(
+        "📎 Men matn va 🎙 ovozli xabarlarni tushunaman. G'oyangizni yozing yoki aytib yuboring."
+    )

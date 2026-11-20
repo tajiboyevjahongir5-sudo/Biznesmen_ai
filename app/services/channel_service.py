@@ -9,15 +9,18 @@ from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.exceptions import TelegramBadRequest
+from aiogram.types import BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.agents.idea_scout import SYSTEM_USER_ID, IdeaScoutAgent
+from app.agents.idea_scout import SYSTEM_USER_ID, IdeaScoutAgent, ScoutIdea
 from app.agents.prompt_engineer import PromptEngineerAgent
 from app.config import Settings
-from app.core.text import render_channel_post
+from app.core.text import render_channel_caption, render_channel_post
 from app.database import repository as repo
 from app.database.models import ChannelIdea, IdeaStatus
+from app.services.ai_service import AIService
+from app.services.gemini_native import GeneratedImage
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +31,18 @@ def idea_deep_link(bot_username: str, idea_id: int) -> str:
     return f"https://t.me/{bot_username}?start={DEEP_LINK_PREFIX}{idea_id}"
 
 
+def image_prompt(title: str, one_liner: str) -> str:
+    """Kanal posti uchun rasm topshirig'i. Rasmda yozuv bo'lmasligi shart (AI matnni buzadi)."""
+    return (
+        "Create an eye-catching, premium cover illustration for a Telegram channel post about a "
+        "business idea. Style: modern 3D isometric illustration, soft studio lighting, clean "
+        "gradient background, vibrant but professional colors, wide 16:9 composition. Show the "
+        "concept with objects, places and simple stylized people. STRICT RULES: no text, no letters, "
+        "no numbers, no logos, no watermarks, no brand names, no real persons. "
+        "Business idea (in Uzbek): " + " ".join(f"{title}. {one_liner}".split())[:500]
+    )
+
+
 class ChannelService:
     def __init__(
         self,
@@ -35,11 +50,14 @@ class ChannelService:
         session_factory: async_sessionmaker[AsyncSession],
         scout: IdeaScoutAgent,
         prompt_engineer: PromptEngineerAgent,
+        ai: AIService | None = None,
     ) -> None:
         self.settings = settings
         self._sf = session_factory
         self.scout = scout
         self.prompt_engineer = prompt_engineer
+        self.ai = ai  # rasm yaratish uchun (POST_IMAGES yoqilganda)
+        self._publishing: set[int] = set()
 
     async def research_and_create_drafts(self) -> list[ChannelIdea]:
         """Kunlik izlanish: yangi g'oyalarni topadi, prompt yozadi va qoralama sifatida saqlaydi."""
@@ -97,25 +115,61 @@ class ChannelService:
         channel_id = self.settings.ideas_channel_id
         if not channel_id:
             raise RuntimeError("IDEAS_CHANNEL_ID sozlanmagan")
-        async with self._sf() as session:
-            idea = await repo.get_idea(session, idea_id)
-            if idea is None or idea.status == IdeaStatus.PUBLISHED:
-                return None
-            kb = InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [
-                        InlineKeyboardButton(
-                            text="🤖 SUPER PROMPT ni olish", url=idea_deep_link(bot_username, idea.id)
-                        )
+        if idea_id in self._publishing:
+            return None  # shu g'oya hozir joylanmoqda (masalan, rasm tayyorlanyapti)
+        self._publishing.add(idea_id)
+        try:
+            async with self._sf() as session:
+                idea = await repo.get_idea(session, idea_id)
+                if idea is None or idea.status == IdeaStatus.PUBLISHED:
+                    return None
+                details, web_used = idea.details, idea.web_researched
+            # Rasm DB sessiyasidan tashqarida tayyorlanadi (bir necha o'n soniya olishi mumkin).
+            image, caption = await self._prepare_image(details, web_used)
+            async with self._sf() as session:
+                idea = await repo.get_idea(session, idea_id)
+                if idea is None or idea.status == IdeaStatus.PUBLISHED:
+                    return None
+                kb = InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [
+                            InlineKeyboardButton(
+                                text="🤖 SUPER PROMPT ni olish", url=idea_deep_link(bot_username, idea.id)
+                            )
+                        ]
                     ]
-                ]
-            )
-            msg = await bot.send_message(channel_id, idea.post_text, reply_markup=kb)
-            idea.status = IdeaStatus.PUBLISHED
-            idea.channel_message_id = msg.message_id
-            idea.published_at = datetime.now(UTC)
-            await session.commit()
-            return idea
+                )
+                msg = None
+                if image is not None:
+                    try:
+                        photo = BufferedInputFile(image.data, image.filename)
+                        msg = await bot.send_photo(channel_id, photo, caption=caption, reply_markup=kb)
+                    except TelegramBadRequest as exc:
+                        logger.warning("idea_photo_rejected idea=%d error=%s", idea_id, exc)
+                if msg is None:
+                    msg = await bot.send_message(channel_id, idea.post_text, reply_markup=kb)
+                idea.status = IdeaStatus.PUBLISHED
+                idea.channel_message_id = msg.message_id
+                idea.published_at = datetime.now(UTC)
+                await session.commit()
+                return idea
+        finally:
+            self._publishing.discard(idea_id)
+
+    async def _prepare_image(self, details: str, web_used: bool) -> tuple[GeneratedImage | None, str]:
+        """Yoqilgan bo'lsa, g'oya uchun rasm va qisqa matn tayyorlaydi. Xatoda — (None, "")."""
+        if not self.settings.post_images or self.ai is None:
+            return None, ""
+        try:
+            idea = ScoutIdea.model_validate_json(details)
+        except ValueError:
+            return None, ""
+        try:
+            image = await self.ai.generate_image(image_prompt(idea.title, idea.one_liner))
+        except Exception as exc:  # noqa: BLE001 - rasm bo'lmasa, matnli post joylanadi
+            logger.warning("idea_image_failed error=%s", type(exc).__name__)
+            return None, ""
+        return image, render_channel_caption(idea, web_used)
 
     async def reject(self, idea_id: int) -> bool:
         async with self._sf() as session:

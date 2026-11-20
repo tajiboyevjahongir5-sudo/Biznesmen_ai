@@ -39,6 +39,8 @@ EDITABLE_KEYS: frozenset[str] = frozenset(
         "research_provider",
         "followup_days",
         "bank_bot_username",
+        "post_images",
+        "gemini_image_model",
     }
 )
 

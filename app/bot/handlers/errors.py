@@ -16,7 +16,7 @@ from app.services.ai_service import AIServiceError
 logger = logging.getLogger(__name__)
 router = Router(name="errors")
 
-GENERIC_ERROR = "Kutilmagan xatolik yuz berdi. Iltimos, birozdan keyin qayta urinib ko'ring."
+GENERIC_ERROR = "😔 Kutilmagan xatolik yuz berdi. Iltimos, birozdan keyin qayta urinib ko'ring."
 
 
 @router.errors()

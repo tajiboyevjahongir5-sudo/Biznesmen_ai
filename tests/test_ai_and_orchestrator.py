@@ -167,7 +167,7 @@ def test_render_analysis_escapes_ai_html_and_warns_without_web():
     joined = "\n".join(parts)
     assert "&lt;b&gt;xulosa&lt;/b&gt;" in joined
     assert "internet qidiruvisiz" in joined
-    assert "Nima uchun muvaffaqiyatsiz" in joined
+    assert "NIMA UCHUN MUVAFFAQIYATSIZ" in joined
     assert all(len(p) <= 4096 for p in parts)
 
 

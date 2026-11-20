@@ -65,25 +65,25 @@ def payment_text(ctx: AppContext, r: PaymentReservation, now: datetime) -> str:
     mm, ss = divmod(left, 60)
     clock = "⌛" if ss % 2 else "⏳"  # har soniyada almashib, "jonli" ko'rinadi
     hurry = "  ⚠️ <i>vaqt oz qoldi!</i>" if 0 < left <= 60 else ""
-    holder = f"\nKarta egasi: <b>{e(s.payment_card_holder)}</b>" if s.payment_card_holder else ""
+    holder = f"\n👤 Egasi: <b>{e(s.payment_card_holder)}</b>" if s.payment_card_holder else ""
     return (
-        f"💳 <b>Kanalga kirish uchun to'lov</b> {access_period(s.subscription_days)}\n\n"
-        f"Karta raqami: <code>{_card(s.payment_card_number)}</code>{holder}\n"
-        f"To'lov summasi: <code>{r.amount}</code> so'm\n"
-        f"(<b>{format_money(r.amount)} so'm</b> — aynan shu summani o'tkazing)\n\n"
+        f"💳 <b>TO'LOV</b> · kanalga kirish {access_period(s.subscription_days)}\n"
+        "━━━━━━━━━━━━━━━━\n"
+        f"🏦 Karta: <code>{_card(s.payment_card_number)}</code>{holder}\n"
+        f"💰 Summa: <code>{r.amount}</code> so'm\n"
+        f"     ↳ <b>{format_money(r.amount)} so'm</b> — aynan shu summani o'tkazing\n\n"
         f"{clock} Qolgan vaqt: <b>{mm}:{ss:02d}</b>{hurry}\n{progress_bar(left, total)}\n\n"
-        "📌 Muhim:\n"
-        f"• Summaning oxirgi raqamlari ({r.offset}) sizning to'lovingizni boshqalardan ajratadi. "
-        "Summani yaxlitlamang.\n"
-        "• To'lov tushishi bilan sizga bir martalik kirish havolasini yuboraman.\n"
-        "• Vaqt tugagandan keyin bu summaga to'lov qilmang."
+        "📌 <b>Muhim</b>\n"
+        f"• Oxirgi raqamlar (<b>{r.offset}</b>) to'lovingizni boshqalardan ajratadi — summani yaxlitlamang\n"
+        "• To'lov tushishi bilan bir martalik kirish havolasini yuboraman\n"
+        "• Vaqt tugagach bu summaga to'lov qilmang"
     )
 
 
 def payment_kb(reservation_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="Bekor qilish", callback_data=f"{CB_PAY_CANCEL}{reservation_id}")]
+            [InlineKeyboardButton(text="❌ Bekor qilish", callback_data=f"{CB_PAY_CANCEL}{reservation_id}")]
         ]
     )
 
@@ -111,7 +111,7 @@ async def pay_start(cb: CallbackQuery, ctx: AppContext, db_user_id: int, bot: Bo
     await cb.answer()
     now = datetime.now(UTC)
     if not created:
-        await cb.message.answer("Sizda tugallanmagan to'lov bor, o'sha summadan foydalaning:")
+        await cb.message.answer("ℹ️ Sizda tugallanmagan to'lov bor — o'sha summadan foydalaning:")
     msg = await cb.message.answer(
         payment_text(ctx, reservation, now), reply_markup=payment_kb(reservation.id)
     )
@@ -131,7 +131,9 @@ async def pay_cancel(cb: CallbackQuery, ctx: AppContext, db_user_id: int) -> Non
     await cb.answer("To'lov bekor qilindi." if ok else "Bu to'lov allaqachon yakunlangan.")
     if ok:
         try:
-            await cb.message.edit_text("To'lov bekor qilindi. Summa boshqa foydalanuvchiga bo'shatildi.")
+            await cb.message.edit_text(
+                "❌ To'lov bekor qilindi.\n\nKerak bo'lsa, /kanal orqali qaytadan boshlashingiz mumkin."
+            )
         except TelegramBadRequest:
             pass
 
@@ -242,7 +244,7 @@ async def deliver_access(bot: Bot, ctx: AppContext, r: PaymentReservation) -> bo
                 bot,
                 r.chat_id,
                 r.message_id,
-                f"✅ To'lov qabul qilindi: <b>{format_money(r.amount)} so'm</b>.",
+                f"✅ <b>To'lov qabul qilindi:</b> {format_money(r.amount)} so'm",
             )
         await bot.send_message(r.chat_id, "🎉 Rahmat! Obunangiz uzaytirildi." + until)
         logger.info("subscription_renewed reservation=%d", r.id)
@@ -263,20 +265,21 @@ async def deliver_access(bot: Bot, ctx: AppContext, r: PaymentReservation) -> bo
             "Bot kanalda admin va 'invite users' huquqiga egami?",
         )
         await bot.send_message(
-            r.chat_id, "To'lovingiz qabul qilindi. Kirish havolasini administrator tez orada yuboradi."
+            r.chat_id, "✅ To'lovingiz qabul qilindi. Kirish havolasini administrator tez orada yuboradi."
         )
         return False
     await ctx.payments.save_invite_link(r.id, link.invite_link)
     if r.message_id:
         await _safe_edit(
-            bot, r.chat_id, r.message_id, f"To'lov qabul qilindi: <b>{format_money(r.amount)} so'm</b>."
+            bot, r.chat_id, r.message_id, f"✅ <b>To'lov qabul qilindi:</b> {format_money(r.amount)} so'm"
         )
     kb = InlineKeyboardMarkup(
         inline_keyboard=[[InlineKeyboardButton(text="🚪 Kanalga kirish", url=link.invite_link)]]
     )
     await bot.send_message(
         r.chat_id,
-        "🎉 Rahmat! To'lovingiz tasdiqlandi.\n\n"
+        "🎉 <b>Rahmat! To'lovingiz tasdiqlandi.</b>\n\n"
+        "👇 Pastdagi tugma orqali kanalga kiring.\n"
         f"🔐 Bu havola <b>faqat bir marta</b> ishlaydi va {s.invite_link_ttl_hours} soat ichida "
         "amal qiladi. Uni boshqalarga bermang." + until,
         reply_markup=kb,

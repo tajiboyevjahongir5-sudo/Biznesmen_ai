@@ -85,8 +85,13 @@ async def run_job(bot: Bot, ctx: AppContext, job: Job) -> None:
         job.phase, job.project_id = "analysis", result.project_id
         await bot.send_message(
             job.chat_id,
-            "📊 Endi bozor, talab, raqobat va moliyani chuqur tahlil qilaman.\n"
-            "⏳ Bu 1-3 daqiqa vaqt olishi mumkin.",
+            "🧠 <b>Ma'lumot yetarli — tahlilni boshladim!</b>\n\n"
+            "🔎 Bozor va talab\n"
+            "⚔️ Raqobatchilar\n"
+            "⚠️ Xavflar va agentlar bahsi\n"
+            "💰 Moliyaviy model\n"
+            "🤖 SUPER PROMPT\n\n"
+            "⏳ <i>Bu 1–3 daqiqa vaqt oladi, kuting.</i>",
         )
     await run_analysis(bot, ctx, job)
 
@@ -107,7 +112,8 @@ async def run_analysis(bot: Bot, ctx: AppContext, job: Job) -> None:
     )
     await bot.send_message(
         job.chat_id,
-        "✅ Tahlil tugadi! Promptni keyin ham /history orqali topasiz.\n\n"
+        "🎉 <b>Tahlil tayyor!</b>\n\n"
+        "📂 Prompt va hisobotni keyin ham /history orqali topasiz.\n"
         "💡 Boshqa g'oyangiz bo'lsa, shunchaki yozing — yangi suhbat boshlaymiz." + later,
     )
     await maybe_send_promo(bot, ctx, job.tg_id, job.chat_id)
@@ -120,7 +126,8 @@ async def send_report(bot: Bot, chat_id: int, project_id: int, html_doc: str) ->
         await bot.send_document(
             chat_id,
             file,
-            caption="📄 To'liq hisobot. Brauzerda oching — kerak bo'lsa «Chop etish → PDF» qilib saqlang.",
+            caption="📄 <b>To'liq hisobot</b>\n\n"
+            "Brauzerda oching — kerak bo'lsa «Chop etish → PDF» qilib saqlang.",
         )
     except TelegramAPIError:
         logger.warning("report_send_failed project=%s", project_id)

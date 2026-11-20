@@ -1,4 +1,4 @@
-"""Gemini'ning o'z (native) REST API si: Google qidiruvi va ovozni matnga aylantirish.
+"""Gemini'ning o'z (native) REST API si: Google qidiruvi, ovozni matnga aylantirish, rasm.
 
 OpenAI-mos endpoint bu ikki imkoniyatni to'liq bermaydi, shuning uchun bu yerda
 `generateContent` to'g'ridan-to'g'ri chaqiriladi (httpx — openai paketi bilan birga keladi,
@@ -9,6 +9,7 @@ URL ga yoki logga hech qachon tushmaydi.
 from __future__ import annotations
 
 import base64
+import binascii
 import logging
 from dataclasses import dataclass
 
@@ -38,6 +39,21 @@ class NativeResult:
     model: str
 
 
+@dataclass(frozen=True)
+class GeneratedImage:
+    data: bytes
+    mime: str
+    model: str
+
+    @property
+    def filename(self) -> str:
+        return "idea." + IMAGE_TYPES.get(self.mime, "png")
+
+
+IMAGE_TYPES = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
+MAX_IMAGE_BYTES = 9 * 1024 * 1024  # Telegram rasm limiti 10 MB
+
+
 def _api_root(settings: Settings) -> str:
     base = settings.gemini_base_url.rstrip("/")
     return base.removesuffix("/openai")  # .../v1beta
@@ -51,17 +67,18 @@ class GeminiNative:
     def __init__(self, settings: Settings, http: httpx.AsyncClient | None = None) -> None:
         self._s = settings
         self._http = http
+        self._detected_image_model = ""
 
     def _client(self) -> httpx.AsyncClient:
         if self._http is None:
             self._http = httpx.AsyncClient(timeout=self._s.openai_timeout_seconds)
         return self._http
 
-    async def _generate(self, model: str, body: dict) -> NativeResult:
+    async def _request(self, method: str, path: str, body: dict | None = None) -> dict:
         key = self._s.gemini_api_key.get_secret_value()
-        url = f"{_api_root(self._s)}/models/{model}:generateContent"
+        url = f"{_api_root(self._s)}/{path}"
         try:
-            resp = await self._client().post(url, json=body, headers={"x-goog-api-key": key})
+            resp = await self._client().request(method, url, json=body, headers={"x-goog-api-key": key})
         except httpx.TimeoutException as exc:
             raise GeminiNativeError(None, "timeout") from exc
         except httpx.HTTPError as exc:
@@ -70,10 +87,17 @@ class GeminiNative:
             detail = ""
             try:
                 detail = str(resp.json().get("error", {}).get("message", ""))
-            except ValueError:
+            except (ValueError, AttributeError):
                 pass
             raise GeminiNativeError(resp.status_code, detail)
-        data = resp.json()
+        try:
+            data = resp.json()
+        except ValueError as exc:
+            raise GeminiNativeError(502, "javob JSON emas") from exc
+        return data if isinstance(data, dict) else {}
+
+    async def _generate(self, model: str, body: dict) -> NativeResult:
+        data = await self._request("POST", f"models/{model}:generateContent", body)
         cand = (data.get("candidates") or [{}])[0]
         parts = (cand.get("content") or {}).get("parts") or []
         text = "".join(p.get("text", "") for p in parts if isinstance(p, dict)).strip()
@@ -128,3 +152,62 @@ class GeminiNative:
             "generationConfig": {"maxOutputTokens": 2000, "temperature": 0},
         }
         return (await self.generate(body)).text
+
+    # ------------------------------------------------------------------ rasm
+
+    async def image_models(self) -> list[str]:
+        """Kalitga ochiq, rasm qaytara oladigan Gemini modellari (eng mosi birinchi)."""
+        data = await self._request("GET", "models?pageSize=1000")
+        names: list[str] = []
+        for m in data.get("models") or []:
+            name = str(m.get("name", "")).removeprefix("models/")
+            methods = m.get("supportedGenerationMethods") or []
+            if "image" in name and "generateContent" in methods and not name.startswith("imagen"):
+                names.append(name)
+        names.sort(reverse=True)  # yangi versiyalar oldinda
+        # Arzonroq "flash" va barqaror (preview/exp bo'lmagan) modellar ustun.
+        names.sort(key=lambda n: ("flash" not in n, "preview" in n or "exp" in n))
+        return names
+
+    async def _image_model(self) -> str:
+        if self._s.gemini_image_model:
+            return self._s.gemini_image_model
+        if self._detected_image_model:
+            return self._detected_image_model
+        models = await self.image_models()
+        if not models:
+            raise GeminiNativeError(404, "rasm yaratadigan model topilmadi")
+        self._detected_image_model = models[0]
+        logger.info("gemini_image_model_detected model=%s", models[0])
+        return models[0]
+
+    async def generate_image(self, prompt: str, aspect_ratio: str = "16:9") -> GeneratedImage:
+        """Matn bo'yicha rasm yaratadi. Rasm bo'lmasa (xavfsizlik filtri va h.k.) xato beradi."""
+        model = await self._image_model()
+        config: dict = {"responseModalities": ["TEXT", "IMAGE"], "imageConfig": {"aspectRatio": aspect_ratio}}
+        body = {"contents": [{"role": "user", "parts": [{"text": prompt}]}], "generationConfig": config}
+        path = f"models/{model}:generateContent"
+        try:
+            data = await self._request("POST", path, body)
+        except GeminiNativeError as exc:
+            if exc.status != 400:
+                raise
+            config.pop("imageConfig")  # eski modellar o'lcham sozlamasini qabul qilmaydi
+            data = await self._request("POST", path, body)
+        cand = (data.get("candidates") or [{}])[0]
+        for part in (cand.get("content") or {}).get("parts") or []:
+            inline = (part.get("inlineData") or part.get("inline_data")) if isinstance(part, dict) else None
+            if not inline or not inline.get("data"):
+                continue
+            mime = str(inline.get("mimeType") or inline.get("mime_type") or "image/png").lower()
+            if mime not in IMAGE_TYPES:
+                continue
+            try:
+                raw = base64.b64decode(inline["data"], validate=True)
+            except (binascii.Error, ValueError) as exc:
+                raise GeminiNativeError(502, "rasm ma'lumoti buzilgan") from exc
+            if not raw or len(raw) > MAX_IMAGE_BYTES:
+                raise GeminiNativeError(502, "rasm hajmi noto'g'ri")
+            return GeneratedImage(raw, mime, model)
+        reason = str(cand.get("finishReason") or (data.get("promptFeedback") or {}).get("blockReason") or "")
+        raise GeminiNativeError(422, f"javobda rasm yo'q {reason}".strip())

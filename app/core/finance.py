@@ -95,44 +95,51 @@ def money(amount: int | float) -> str:
     return f"{int(round(amount)):,}".replace(",", " ")
 
 
-def render_finance(model: FinanceModel, html: bool = True) -> str:
+def render_finance(model: FinanceModel) -> str:
     """Telegram (HTML) uchun moliyaviy model bo'limi."""
-    from app.core.text import e  # aylanma importdan qochish
+    from app.core.text import SEP, e, quote  # aylanma importdan qochish
 
     inp = model.inputs
-    b = (lambda x: f"<b>{x}</b>") if html else (lambda x: x)
+    unit = e(inp.unit_name)
+    if model.breakeven_units is not None:
+        breakeven = f"<b>oyiga {money(model.breakeven_units)} {unit}</b>"
+    else:
+        breakeven = "<b>erishib bo'lmaydi</b> (marja manfiy)"
     lines = [
-        b("💰 MOLIYAVIY MODEL") + " (hisob-kitobni Python bajardi)",
+        "💰 <b>MOLIYAVIY MODEL</b>",
+        SEP,
+        "<i>Hisob-kitobni Python bajardi. Boshlang'ich raqamlar — suhbatdan olingan yoki taxmin.</i>",
         "",
-        f"Narx: {money(inp.price_per_unit)} so'm / {e(inp.unit_name)}",
-        f"O'zgaruvchan xarajat: {money(inp.variable_cost_per_unit)} so'm / {e(inp.unit_name)}",
-        f"Marja: {b(money(model.margin_per_unit) + ' so`m')} ({model.margin_pct}%)",
-        f"Oylik doimiy xarajatlar: {money(inp.monthly_fixed_costs)} so'm",
-        f"Boshlang'ich sarmoya: {money(inp.startup_cost)} so'm",
-        "Zararsizlik nuqtasi: "
-        + (
-            b(f"oyiga {money(model.breakeven_units)} {e(inp.unit_name)}")
-            if model.breakeven_units is not None
-            else b("erishib bo'lmaydi (marja manfiy)")
-        ),
+        f"🏷 Narx: <b>{money(inp.price_per_unit)} so'm</b> / {unit}",
+        f"📦 O'zgaruvchan xarajat: {money(inp.variable_cost_per_unit)} so'm / {unit}",
+        f"💵 Marja: <b>{money(model.margin_per_unit)} so'm</b> ({model.margin_pct}%)",
+        f"🏠 Oylik doimiy xarajat: {money(inp.monthly_fixed_costs)} so'm",
+        f"🚀 Boshlang'ich sarmoya: {money(inp.startup_cost)} so'm",
+        f"⚖️ Zararsizlik nuqtasi: {breakeven}",
         "",
+        "📊 <b>Ssenariylar (oyiga)</b>",
     ]
     for s in model.scenarios:
-        payback = f"{s.payback_months} oyda qoplanadi" if s.payback_months is not None else "qoplanmaydi"
         sign = "📈" if s.profit > 0 else "📉"
-        lines.append(
-            f"{sign} {b(s.name)}: {money(s.units)} {e(inp.unit_name)}/oy → "
-            f"foyda {money(s.profit)} so'm/oy, sarmoya {payback}"
-        )
+        payback = "sarmoya qaytmaydi"
+        if s.payback_months is not None:
+            payback = f"sarmoya {s.payback_months} oyda qaytadi"
+        lines += [
+            f"{sign} <b>{e(s.name)}</b> — {money(s.units)} {unit}",
+            f"     ↳ foyda: <b>{money(s.profit)} so'm</b> · {payback}",
+        ]
     if model.warnings:
         lines += [""] + [f"⚠️ {e(w)}" for w in model.warnings]
     if inp.notes:
-        lines += ["", f"<i>{e(inp.notes)}</i>" if html else inp.notes]
-    lines += [
-        "",
-        "<i>Formulalar: marja = narx − o'zgaruvchan xarajat; foyda = sotuv × marja − doimiy "
-        "xarajat; zararsizlik = doimiy xarajat ÷ marja; qoplash = sarmoya ÷ oylik foyda.</i>",
-    ]
+        lines += ["", f"📝 <i>{e(inp.notes)}</i>"]
+    formulas = (
+        "🧮 <b>Formulalar</b>\n"
+        "Marja = narx − o'zgaruvchan xarajat\n"
+        "Foyda = sotuv × marja − doimiy xarajat\n"
+        "Zararsizlik = doimiy xarajat ÷ marja\n"
+        "Qoplash = sarmoya ÷ oylik foyda"
+    )
+    lines += ["", quote(formulas, expandable=True)]
     return "\n".join(lines)
 
 

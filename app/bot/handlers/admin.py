@@ -27,15 +27,22 @@ from datetime import UTC, datetime, timedelta
 from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramAPIError, TelegramRetryAfter
 from aiogram.filters import Command, CommandObject
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import (
+    BufferedInputFile,
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 
 from app.bot.context import AppContext
 from app.bot.handlers.payment import deliver_access
 from app.bot.helpers import promo_kb, promo_text, send_parts
-from app.core.text import e, format_money
+from app.core.text import e, format_money, heading, quote
 from app.database import repository as repo
 from app.database.models import ChannelIdea, IdeaStatus
 from app.services.ai_service import AIServiceError
+from app.services.channel_service import image_prompt
 from app.services.payment_parser import parse_payment
 from app.services.runtime_settings import SettingError, mask_card
 
@@ -59,8 +66,8 @@ def _idea_kb(idea_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="Kanalga joylash", callback_data=f"{CB_PUBLISH}{idea_id}"),
-                InlineKeyboardButton(text="Rad etish", callback_data=f"{CB_REJECT}{idea_id}"),
+                InlineKeyboardButton(text="✅ Kanalga joylash", callback_data=f"{CB_PUBLISH}{idea_id}"),
+                InlineKeyboardButton(text="❌ Rad etish", callback_data=f"{CB_REJECT}{idea_id}"),
             ]
         ]
     )
@@ -68,13 +75,17 @@ def _idea_kb(idea_id: int) -> InlineKeyboardMarkup:
 
 async def send_idea_preview(bot: Bot, chat_id: int, idea: ChannelIdea) -> None:
     await bot.send_message(
-        chat_id, f"<b>Qoralama #{idea.id}</b>\n\n{idea.post_text}", reply_markup=_idea_kb(idea.id)
+        chat_id, f"📝 <b>Qoralama #{idea.id}</b>\n\n{idea.post_text}", reply_markup=_idea_kb(idea.id)
     )
 
 
 def _int_arg(command: CommandObject) -> int | None:
     arg = (command.args or "").strip().lstrip("#")
     return int(arg) if arg.isdigit() and len(arg) <= 15 else None
+
+
+def _dot(on: bool) -> str:
+    return "🟢" if on else "⚪"
 
 
 @router.message(Command("admin"))
@@ -91,37 +102,31 @@ async def admin_home(message: Message, ctx: AppContext) -> None:
         else "narx sozlanmagan"
     )
     lines = [
-        "<b>ADMIN PANEL — BIZNES MIND AI</b>",
+        heading("🛠", "ADMIN PANEL"),
+        f"👥 Foydalanuvchilar: <b>{users}</b>",
+        f"💡 G'oyalar: 📝 {ideas.get('draft', 0)} · ✅ {ideas.get('published', 0)} · "
+        f"❌ {ideas.get('rejected', 0)}",
+        f"💳 To'lovlar: ✅ {pay.get('paid', 0)} · ⏳ {pay.get('pending', 0)} · ⌛ {pay.get('expired', 0)}",
+        f"💰 Jami tushum: <b>{format_money(pay.get('paid_sum', 0))} so'm</b>",
         "",
-        f"Foydalanuvchilar: <b>{users}</b>",
-        f"G'oyalar: qoralama {ideas.get('draft', 0)}, joylangan {ideas.get('published', 0)}, "
-        f"rad etilgan {ideas.get('rejected', 0)}",
-        f"To'lovlar: to'langan {pay.get('paid', 0)}, kutilmoqda {pay.get('pending', 0)}, "
-        f"muddati o'tgan {pay.get('expired', 0)}",
-        f"Jami tushum: <b>{format_money(pay.get('paid_sum', 0))} so'm</b>",
+        "🤖 <b>Bugungi AI sarfi</b>",
+        f"• So'rovlar: <b>{u.global_requests}</b> / {s.ai_daily_requests_global}",
+        f"• Tokenlar: kirish {u.input_tokens} · chiqish {u.output_tokens}",
+        f"• Taxminiy xarajat: {cost}",
         "",
-        "<b>Bugungi AI sarfi</b>",
-        f"So'rovlar: {u.global_requests}/{s.ai_daily_requests_global}",
-        f"Tokenlar: kirish {u.input_tokens}, chiqish {u.output_tokens}",
-        f"Taxminiy xarajat: {cost}",
-        f"Internet qidiruvi: {'yoqilgan' if s.web_search_enabled else 'o`chirilgan'}",
-        f"To'lov tizimi: {'sozlangan' if s.payments_configured else 'sozlanmagan'}",
+        "⚙️ <b>Holat</b>",
+        f"{_dot(s.payments_configured)} To'lov tizimi",
+        f"{_dot(s.userbot_enabled)} Avtomatik to'lov (userbot)",
+        f"{_dot(s.web_search_enabled)} Internet qidiruvi",
+        f"{_dot(s.post_images)} Post rasmlari",
+        f"{_dot(s.ideas_auto_publish)} G'oyalarni avtomatik joylash",
         "",
-        "<b>Buyruqlar</b>",
-        "/aitest — AI kaliti va modelini tekshirish",
-        "/research — izlanishni hozir boshlash",
-        "/ideas — qoralama g'oyalar",
-        "/publish id · /reject id",
-        "/payments — so'nggi to'lovlar",
-        "/confirm id — to'lovni qo'lda tasdiqlash",
-        "/block tg_id · /unblock tg_id",
-        "/promo — reklama ko'rinishi",
-        "/settings — kanal, karta, narx va boshqa sozlamalar",
-        "/stats — batafsil statistika",
-        "/broadcast — hammaga xabar yuborish",
-        "/websearch on|off — internet (Google) qidiruvi",
-        "/parsetest — bank xabarini parser qanday o'qishini tekshirish",
-        "/userbot — avtomatik to'lov holati",
+        "📋 <b>Buyruqlar</b>",
+        "🤖 /aitest · /websearch · /post_images",
+        "💡 /research · /ideas · /publish <i>id</i> · /reject <i>id</i> · /promo",
+        "💳 /payments · /confirm <i>id</i> · /parsetest · /userbot",
+        "👥 /stats · /broadcast · /block <i>tg_id</i> · /unblock <i>tg_id</i>",
+        "⚙️ /settings — kanal, karta, narx va boshqa sozlamalar",
     ]
     await message.answer("\n".join(lines))
 
@@ -129,21 +134,21 @@ async def admin_home(message: Message, ctx: AppContext) -> None:
 @router.message(Command("aitest"))
 async def aitest_cmd(message: Message, ctx: AppContext) -> None:
     """AI kaliti va modelini tekshiradi, mavjud model nomlarini ko'rsatadi."""
-    await message.answer("AI ulanishini tekshiryapman...")
+    await message.answer("🔌 AI ulanishini tekshiryapman...")
     lines = await ctx.ai.diagnose()
-    await message.answer("<b>AI DIAGNOSTIKA</b>\n\n" + "\n".join(e(x) for x in lines))
+    await message.answer(heading("🩺", "AI DIAGNOSTIKA") + "\n" + "\n".join(e(x) for x in lines))
 
 
 @router.message(Command("research"))
 async def research_now(message: Message, ctx: AppContext, bot: Bot) -> None:
-    await message.answer("Izlanish boshlandi. Bu bir necha daqiqa olishi mumkin.")
+    await message.answer("🔎 Izlanish boshlandi. Bu bir necha daqiqa olishi mumkin...")
     try:
         created = await ctx.channel.research_and_create_drafts()
     except AIServiceError as exc:
-        await message.answer(f"Izlanish bajarilmadi: {exc.user_message}")
+        await message.answer(f"❌ Izlanish bajarilmadi: {exc.user_message}")
         return
     if not created:
-        await message.answer("Yangi g'oya topilmadi (yoki DAILY_IDEAS_COUNT=0).")
+        await message.answer("🤷 Yangi g'oya topilmadi (yoki kunlik g'oyalar soni 0).")
         return
     for idea in created:
         await send_idea_preview(bot, message.chat.id, idea)
@@ -154,7 +159,7 @@ async def list_drafts(message: Message, ctx: AppContext, bot: Bot) -> None:
     async with ctx.session_factory() as session:
         drafts = await repo.list_ideas(session, IdeaStatus.DRAFT, limit=10)
     if not drafts:
-        await message.answer("Qoralama g'oyalar yo'q. Yangi izlanish: /research")
+        await message.answer("📭 Qoralama g'oyalar yo'q. Yangi izlanish: /research")
         return
     for idea in drafts:
         await send_idea_preview(bot, message.chat.id, idea)
@@ -175,7 +180,7 @@ async def _publish(bot: Bot, ctx: AppContext, idea_id: int) -> str:
 async def publish_cmd(message: Message, command: CommandObject, ctx: AppContext, bot: Bot) -> None:
     idea_id = _int_arg(command)
     if idea_id is None:
-        await message.answer("Masalan: /publish 5")
+        await message.answer("ℹ️ Masalan: /publish 5")
         return
     await message.answer(await _publish(bot, ctx, idea_id))
 
@@ -184,10 +189,10 @@ async def publish_cmd(message: Message, command: CommandObject, ctx: AppContext,
 async def reject_cmd(message: Message, command: CommandObject, ctx: AppContext) -> None:
     idea_id = _int_arg(command)
     if idea_id is None:
-        await message.answer("Masalan: /reject 5")
+        await message.answer("ℹ️ Masalan: /reject 5")
         return
     ok = await ctx.channel.reject(idea_id)
-    await message.answer("Rad etildi." if ok else "Qoralama topilmadi.")
+    await message.answer("❌ Rad etildi." if ok else "🔍 Qoralama topilmadi.")
 
 
 @router.callback_query(F.data.startswith(CB_PUBLISH))
@@ -218,20 +223,20 @@ async def reject_cb(cb: CallbackQuery, ctx: AppContext) -> None:
 async def payments_cmd(message: Message, ctx: AppContext) -> None:
     rows = await ctx.payments.list_recent()
     if not rows:
-        await message.answer("Hali to'lovlar yo'q.")
+        await message.answer("📭 Hali to'lovlar yo'q.")
         return
     names = {
-        "pending": "kutilmoqda",
-        "paid": "to'langan",
-        "expired": "muddati o'tgan",
-        "cancelled": "bekor qilingan",
+        "pending": "⏳ kutilmoqda",
+        "paid": "✅ to'langan",
+        "expired": "⌛ muddati o'tgan",
+        "cancelled": "❌ bekor qilingan",
     }
-    lines = ["<b>So'nggi to'lovlar</b>", ""]
+    lines = [heading("💳", "SO'NGGI TO'LOVLAR")]
     for r in rows:
         by = f" ({e(r.confirmed_by)})" if r.confirmed_by else ""
         lines.append(
-            f"#{r.id} · {format_money(r.amount)} so'm · {names.get(r.status, r.status)}{by} · "
-            f"{r.created_at:%d.%m %H:%M} UTC"
+            f"<b>#{r.id}</b> · {format_money(r.amount)} so'm · {names.get(r.status, r.status)}{by}\n"
+            f"<i>{r.created_at:%d.%m %H:%M} UTC</i>"
         )
     await message.answer("\n".join(lines))
 
@@ -240,15 +245,15 @@ async def payments_cmd(message: Message, ctx: AppContext) -> None:
 async def confirm_cmd(message: Message, command: CommandObject, ctx: AppContext, bot: Bot) -> None:
     rid = _int_arg(command)
     if rid is None:
-        await message.answer("Masalan: /confirm 17 (to'lov raqami /payments ro'yxatida)")
+        await message.answer("ℹ️ Masalan: /confirm 17 (to'lov raqami /payments ro'yxatida)")
         return
     r = await ctx.payments.admin_confirm(rid, message.from_user.id)
     if r is None:
-        await message.answer("To'lov topilmadi yoki allaqachon tasdiqlangan.")
+        await message.answer("🔍 To'lov topilmadi yoki allaqachon tasdiqlangan.")
         return
     ok = await deliver_access(bot, ctx, r)
     await message.answer(
-        f"To'lov #{rid} tasdiqlandi. " + ("Havola yuborildi." if ok else "Havola yuborilmadi.")
+        f"✅ To'lov #{rid} tasdiqlandi. " + ("Havola yuborildi." if ok else "⚠️ Havola yuborilmadi.")
     )
 
 
@@ -266,26 +271,26 @@ async def _set_block(ctx: AppContext, tg_id: int, value: bool) -> bool:
 async def block_cmd(message: Message, command: CommandObject, ctx: AppContext) -> None:
     tg_id = _int_arg(command)
     if tg_id is None or tg_id in ctx.settings.admin_ids:
-        await message.answer("Masalan: /block 123456789")
+        await message.answer("ℹ️ Masalan: /block 123456789")
         return
-    await message.answer("Bloklandi." if await _set_block(ctx, tg_id, True) else "Foydalanuvchi topilmadi.")
+    ok = await _set_block(ctx, tg_id, True)
+    await message.answer("🚫 Bloklandi." if ok else "🔍 Foydalanuvchi topilmadi.")
 
 
 @router.message(Command("unblock"))
 async def unblock_cmd(message: Message, command: CommandObject, ctx: AppContext) -> None:
     tg_id = _int_arg(command)
     if tg_id is None:
-        await message.answer("Masalan: /unblock 123456789")
+        await message.answer("ℹ️ Masalan: /unblock 123456789")
         return
     await message.answer(
-        "Blokdan chiqarildi." if await _set_block(ctx, tg_id, False) else "Foydalanuvchi topilmadi."
+        "✅ Blokdan chiqarildi." if await _set_block(ctx, tg_id, False) else "🔍 Foydalanuvchi topilmadi."
     )
 
 
 # ------------------------------------------------------------------ sozlamalar
 
-SETTINGS_HELP = (
-    "<b>Sozlash buyruqlari</b>\n"
+_SETTINGS_COMMANDS = (
     "/link_ideas — g'oyalar kanalini ulash (kod beriladi)\n"
     "/link_payment — to'lov kanalini ulash (kod beriladi)\n"
     "/card 8600123412341234 — karta raqami\n"
@@ -296,10 +301,14 @@ SETTINGS_HELP = (
     "/followup_days 7 — tahlildan keyin kuzatuv (0 — o'chiq)\n"
     "/bank_bot HUMOcardbot — bank boti (userbot uchun)\n"
     "/websearch on|off — internet qidiruvi\n"
+    "/post_images on|off — kanal postlariga AI rasm\n"
     "/channel_title Nomi — kanal nomi (reklamada)\n"
     "/daily_ideas 2 — kuniga nechta g'oya\n"
     "/research_time 09:00 — kunlik izlanish vaqti\n"
     "/autopublish on|off — g'oyalarni tasdiqsiz joylash"
+)
+SETTINGS_HELP = "🛠 <b>Sozlash buyruqlari</b> <i>(ochish uchun bosing)</i>\n" + quote(
+    _SETTINGS_COMMANDS, expandable=True
 )
 
 
@@ -310,24 +319,34 @@ async def settings_cmd(message: Message, ctx: AppContext) -> None:
     def ch(value: int | None) -> str:
         return f"<code>{value}</code>" if value else "ulanmagan"
 
+    def on(value: bool, yes: str = "yoqilgan", no: str = "o'chiq") -> str:
+        return f"{_dot(value)} {yes if value else no}"
+
+    sub = f"{s.subscription_days} kun" if s.subscription_days else "umrbod (bir martalik)"
+    follow = f"{s.followup_days} kundan keyin" if s.followup_days else "o'chiq"
+    bank = f" · @{e(s.bank_bot_username)}" if s.bank_bot_username else ""
     lines = [
-        "<b>JORIY SOZLAMALAR</b>",
+        heading("⚙️", "JORIY SOZLAMALAR"),
+        "📢 <b>Kanallar</b>",
+        f"• G'oyalar kanali: {ch(s.ideas_channel_id)}",
+        f"• To'lov kanali: {ch(s.payment_channel_id)}",
+        f"• Kanal nomi: {e(s.ideas_channel_title)}",
         "",
-        f"G'oyalar kanali: {ch(s.ideas_channel_id)}",
-        f"To'lov kanali: {ch(s.payment_channel_id)}",
-        f"Avtomatik to'lov (userbot): {'sozlangan' if s.userbot_enabled else 'o`chiq'}"
-        + (f" · @{e(s.bank_bot_username)}" if s.bank_bot_username else ""),
-        f"Karta: {mask_card(s.payment_card_number)}",
-        f"Karta egasi: {e(s.payment_card_holder) or 'kiritilmagan'}",
-        f"Narx: {format_money(s.channel_price_uzs)} so'm",
-        f"Internet qidiruvi: {'yoqilgan' if s.web_search_enabled else 'o`chirilgan'}",
-        f"Kuzatuv: {f'{s.followup_days} kundan keyin' if s.followup_days else 'o`chirilgan'}",
-        f"Obuna muddati: {f'{s.subscription_days} kun' if s.subscription_days else 'umrbod (bir martalik)'}",
-        f"To'lov vaqti: {s.payment_timeout_seconds // 60} daqiqa",
-        f"Kanal nomi: {e(s.ideas_channel_title)}",
-        f"Kunlik g'oyalar: {s.daily_ideas_count} ta, soat {s.daily_research_time} ({s.timezone})",
-        f"Avtomatik joylash: {'yoqilgan' if s.ideas_auto_publish else 'o`chirilgan'}",
-        f"To'lov tizimi: <b>{'tayyor' if s.payments_configured else 'to`liq sozlanmagan'}</b>",
+        "💳 <b>To'lov</b>",
+        f"• Karta: {mask_card(s.payment_card_number)}",
+        f"• Karta egasi: {e(s.payment_card_holder) or 'kiritilmagan'}",
+        f"• Narx: <b>{format_money(s.channel_price_uzs)} so'm</b>",
+        f"• To'lov vaqti: {s.payment_timeout_seconds // 60} daqiqa",
+        f"• Obuna muddati: {sub}",
+        f"• Userbot: {on(s.userbot_enabled, 'sozlangan')}{bank}",
+        f"• Holat: <b>{on(s.payments_configured, 'tayyor', 'to`liq sozlanmagan')}</b>",
+        "",
+        "💡 <b>G'oyalar va AI</b>",
+        f"• Kunlik g'oyalar: {s.daily_ideas_count} ta, soat {s.daily_research_time} ({s.timezone})",
+        f"• Avtomatik joylash: {on(s.ideas_auto_publish)}",
+        f"• Post rasmlari: {on(s.post_images)}",
+        f"• Internet qidiruvi: {on(s.web_search_enabled)}",
+        f"• Kuzatuv: {follow}",
         "",
         SETTINGS_HELP,
     ]
@@ -338,12 +357,12 @@ async def _set(message: Message, ctx: AppContext, key: str, value: str, ok_text:
     try:
         await ctx.runtime.set(key, value)
     except SettingError as exc:
-        await message.answer(f"Qabul qilinmadi: {e(str(exc))}")
+        await message.answer(f"⚠️ Qabul qilinmadi: {e(str(exc))}")
         return
     # To'lov servisi ham yangi narx/vaqtdan foydalansin
     ctx.payments.base_amount = ctx.settings.channel_price_uzs
     ctx.payments.timeout = timedelta(seconds=ctx.settings.payment_timeout_seconds)
-    await message.answer(ok_text)
+    await message.answer(f"✅ {ok_text}" if ok_text[:1].isalnum() else ok_text)
 
 
 def _arg(command: CommandObject) -> str:
@@ -354,7 +373,7 @@ def _arg(command: CommandObject) -> str:
 async def card_cmd(message: Message, command: CommandObject, ctx: AppContext) -> None:
     value = _arg(command)
     if not value:
-        await message.answer("Masalan: /card 8600 1234 5678 9012")
+        await message.answer("ℹ️ Masalan: /card 8600 1234 5678 9012")
         return
     await _set(message, ctx, "payment_card_number", value, "Karta saqlandi.")
     # Karta raqami chatda qolmasligi uchun admin xabarini o'chirishga urinamiz
@@ -366,7 +385,7 @@ async def card_cmd(message: Message, command: CommandObject, ctx: AppContext) ->
 async def card_holder_cmd(message: Message, command: CommandObject, ctx: AppContext) -> None:
     value = _arg(command)[:80]
     if not value:
-        await message.answer("Masalan: /card_holder Aliyev Vali")
+        await message.answer("ℹ️ Masalan: /card_holder Aliyev Vali")
         return
     await _set(message, ctx, "payment_card_holder", value, "Karta egasi saqlandi.")
 
@@ -375,7 +394,7 @@ async def card_holder_cmd(message: Message, command: CommandObject, ctx: AppCont
 async def price_cmd(message: Message, command: CommandObject, ctx: AppContext) -> None:
     value = re.sub(r"[ _.,]", "", _arg(command))
     if not value.isdigit():
-        await message.answer("Masalan: /price 50000")
+        await message.answer("ℹ️ Masalan: /price 50000")
         return
     await _set(message, ctx, "channel_price_uzs", value, f"Narx: {format_money(int(value))} so'm.")
 
@@ -395,7 +414,7 @@ async def pay_minutes_cmd(message: Message, command: CommandObject, ctx: AppCont
 async def channel_title_cmd(message: Message, command: CommandObject, ctx: AppContext) -> None:
     value = _arg(command)[:100]
     if not value:
-        await message.answer("Masalan: /channel_title BIZNES MIND g'oyalar")
+        await message.answer("ℹ️ Masalan: /channel_title BIZNES MIND g'oyalar")
         return
     await _set(message, ctx, "ideas_channel_title", value, "Kanal nomi saqlandi.")
 
@@ -420,7 +439,7 @@ async def research_time_cmd(message: Message, command: CommandObject, ctx: AppCo
 async def autopublish_cmd(message: Message, command: CommandObject, ctx: AppContext) -> None:
     value = _arg(command).lower()
     if value not in {"on", "off"}:
-        await message.answer("Masalan: /autopublish on yoki /autopublish off")
+        await message.answer("ℹ️ Masalan: /autopublish on yoki /autopublish off")
         return
     await _set(
         message,
@@ -467,7 +486,7 @@ async def promo_cmd(message: Message, ctx: AppContext, bot: Bot) -> None:
 async def sub_days_cmd(message: Message, command: CommandObject, ctx: AppContext) -> None:
     value = _arg(command)
     if not value.isdigit() or int(value) > 3650:
-        await message.answer("Masalan: /sub_days 30 (oylik obuna) yoki /sub_days 0 (umrbod kirish)")
+        await message.answer("ℹ️ Masalan: /sub_days 30 (oylik obuna) yoki /sub_days 0 (umrbod kirish)")
         return
     days = int(value)
     await _set(
@@ -488,8 +507,7 @@ async def stats_cmd(message: Message, ctx: AppContext) -> None:
         st = await repo.bot_stats(session, datetime.now(UTC))
     conv = f"{st['done'] / st['projects'] * 100:.0f}%" if st["projects"] else "—"
     lines = [
-        "📊 <b>STATISTIKA</b>",
-        "",
+        heading("📊", "STATISTIKA"),
         "👥 <b>Foydalanuvchilar</b>",
         f"Jami: <b>{st['users']}</b> · bloklangan: {st['blocked']}",
         f"Yangi: 24 soat — {st['users_new_day']}, 7 kun — {st['users_new_week']}",
@@ -637,11 +655,72 @@ async def websearch_cmd(message: Message, command: CommandObject, ctx: AppContex
     )
 
 
+POST_IMAGES_HELP = (
+    "/post_images on — kanal postlariga AI rasm qo'shish\n"
+    "/post_images off — o'chirish (faqat matnli post)\n"
+    "/post_images test — bitta sinov rasmini shu yerga yuborish\n"
+    "/post_images model NOM — rasm modelini tanlash (auto — avtomatik)\n\n"
+    "<i>⚠️ Gemini rasm modellari odatda pullik (billing yoqilgan kalit kerak). Har bir post — "
+    "bitta rasm so'rovi. Narxni Google AI Studio'da tekshiring. Rasm yaratilmasa, post "
+    "odatdagidek matn ko'rinishida joylanadi.</i>"
+)
+
+
+@router.message(Command("post_images"))
+async def post_images_cmd(message: Message, command: CommandObject, ctx: AppContext) -> None:
+    s = ctx.settings
+    action, _, rest = _arg(command).partition(" ")
+    action = action.lower()
+    if action in {"on", "off"}:
+        if action == "on" and s.ai_provider != "gemini":
+            await message.answer("Rasm faqat AI_PROVIDER=gemini bilan ishlaydi.")
+            return
+        await _set(
+            message,
+            ctx,
+            "post_images",
+            "true" if action == "on" else "false",
+            "🖼 Kanal postlariga rasm qo'shiladi." if action == "on" else "Kanal rasmlari o'chirildi.",
+        )
+        return
+    if action == "model":
+        name = rest.strip()
+        if not name:
+            await message.answer(
+                "ℹ️ Masalan: /post_images model gemini-2.5-flash-image yoki /post_images model auto"
+            )
+            return
+        value = "" if name.lower() == "auto" else name
+        await _set(message, ctx, "gemini_image_model", value, f"Rasm modeli: {e(name)}")
+        return
+    if action == "test":
+        await message.answer("🎨 Sinov rasmi tayyorlanyapti (10–40 soniya)...")
+        prompt = image_prompt(
+            "Mahalla uchun sog'lom nonushta yetkazib berish", "Ertalab ofis xodimlariga issiq nonushta"
+        )
+        try:
+            image = await ctx.ai.generate_image(prompt)
+        except AIServiceError as exc:
+            await message.answer(
+                f"❌ Rasm yaratilmadi: <code>{type(exc).__name__}</code>\n\n"
+                "Sabab ko'pincha: kalitda billing yoqilmagan yoki rasm modeli yo'q. /aitest bilan tekshiring."
+            )
+            return
+        await message.answer_photo(
+            BufferedInputFile(image.data, image.filename),
+            caption=f"✅ Rasm tayyor. Model: <code>{e(image.model)}</code>",
+        )
+        return
+    state = "yoqilgan" if s.post_images else "o'chiq"
+    model = s.gemini_image_model or "avtomatik"
+    await message.answer(f"🖼 Kanal rasmlari: <b>{state}</b> · model: {e(model)}\n\n{POST_IMAGES_HELP}")
+
+
 @router.message(Command("followup_days"))
 async def followup_days_cmd(message: Message, command: CommandObject, ctx: AppContext) -> None:
     value = _arg(command)
     if not value.isdigit() or int(value) > 90:
-        await message.answer("Masalan: /followup_days 7 (tahlildan 7 kun keyin so'rash) yoki 0 (o'chirish)")
+        await message.answer("ℹ️ Masalan: /followup_days 7 (tahlildan 7 kun keyin so'rash) yoki 0 (o'chirish)")
         return
     await _set(
         message,
@@ -722,7 +801,7 @@ async def userbot_cmd(message: Message, ctx: AppContext) -> None:
 async def bank_bot_cmd(message: Message, command: CommandObject, ctx: AppContext) -> None:
     value = _arg(command)
     if not value:
-        await message.answer("Masalan: /bank_bot HUMOcardbot (bildirishnoma keladigan bank boti username)")
+        await message.answer("ℹ️ Masalan: /bank_bot HUMOcardbot (bildirishnoma keladigan bank boti username)")
         return
     await _set(
         message,

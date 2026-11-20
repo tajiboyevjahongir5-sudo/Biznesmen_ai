@@ -76,7 +76,7 @@ def build_context(settings: Settings, session_factory, runtime: RuntimeSettings)
         payments=PaymentService(
             session_factory, settings.channel_price_uzs, settings.payment_timeout_seconds
         ),
-        channel=ChannelService(settings, session_factory, IdeaScoutAgent(ai), prompt_engineer),
+        channel=ChannelService(settings, session_factory, IdeaScoutAgent(ai), prompt_engineer, ai=ai),
         rate_limiter=RateLimiter(settings.rate_limit_messages, settings.rate_limit_window_seconds),
         user_locks=UserLocks(),
         runtime=runtime,

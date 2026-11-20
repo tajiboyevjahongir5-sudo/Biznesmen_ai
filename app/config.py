@@ -122,6 +122,10 @@ class Settings(BaseSettings):
     daily_research_time: str = Field(default="09:00", alias="DAILY_RESEARCH_TIME")
     timezone: str = Field(default="Asia/Tashkent", alias="TIMEZONE")
     ideas_auto_publish: bool = Field(default=False, alias="IDEAS_AUTO_PUBLISH")
+    # Kanal postlariga AI rasm (Gemini rasm modeli). Pullik bo'lishi mumkin — standart o'chiq.
+    post_images: bool = Field(default=False, alias="POST_IMAGES")
+    # Bo'sh — kalitga ochiq rasm modellaridan avtomatik tanlanadi.
+    gemini_image_model: str = Field(default="", alias="GEMINI_IMAGE_MODEL")
 
     # --- To'lov ---
     payment_channel_id: int | None = Field(default=None, alias="PAYMENT_CHANNEL_ID")
@@ -205,6 +209,15 @@ class Settings(BaseSettings):
         for prefix in ("postgres://", "postgresql://"):
             if value.startswith(prefix):
                 return "postgresql+asyncpg://" + value[len(prefix) :]
+        return value
+
+    @field_validator("gemini_image_model")
+    @classmethod
+    def _clean_image_model(cls, value: str) -> str:
+        # Model nomi URL yo'liga tushadi, shuning uchun faqat xavfsiz belgilar.
+        value = value.strip().removeprefix("models/")
+        if value and not re.fullmatch(r"[A-Za-z0-9._-]{1,80}", value):
+            raise ValueError("rasm modeli nomi noto'g'ri")
         return value
 
     @field_validator("bank_bot_username")

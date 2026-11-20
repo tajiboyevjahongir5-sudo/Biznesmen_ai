@@ -52,15 +52,16 @@ async def is_channel_member(bot: Bot, ctx: AppContext, telegram_id: int) -> bool
 def promo_text(ctx: AppContext) -> str:
     s = ctx.settings
     return (
-        f"🚀 <b>{e(s.ideas_channel_title)}</b>\n\n"
+        f"💎 <b>{e(s.ideas_channel_title)}</b>\n"
+        "━━━━━━━━━━━━━━━━\n"
         "Har kuni bozorni o'rganib, <b>talabi yuqori va raqobati past</b> biznes g'oyalarni "
         "joylab boraman.\n\n"
         "💡 Har kuni yangi, tekshirilgan g'oyalar\n"
         "📊 Talab, raqobat va xavflar tahlili\n"
-        "🤖 Har bir g'oya ostidagi tugma orqali — tayyor SUPER PROMPT\n\n"
-        f"💳 Kanalga kirish: <b>{format_money(s.channel_price_uzs)} so'm</b> "
-        f"{access_period(s.subscription_days)}.\n\n"
-        "<i>Eslatma: g'oyalar tahlil va maslahat xarakterida, daromad kafolatlanmaydi.</i>"
+        "🤖 Har bir g'oya uchun tayyor SUPER PROMPT\n"
+        "🔒 Yopiq kanal — faqat a'zolar uchun\n\n"
+        f"💳 Kirish: <b>{format_money(s.channel_price_uzs)} so'm</b> {access_period(s.subscription_days)}\n\n"
+        "<i>G'oyalar tahlil va maslahat xarakterida, daromad kafolatlanmaydi.</i>"
     )
 
 
