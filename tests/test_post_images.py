@@ -215,3 +215,71 @@ async def test_publish_without_images_does_not_call_ai(session_factory):
     await svc.publish(bot, idea_id, "TestBot")
     ai.generate_image.assert_not_awaited()
     bot.send_message.assert_awaited_once()
+
+
+FREE_TIER_429 = {
+    "error": {
+        "code": 429,
+        "message": "You exceeded your current quota. Quota exceeded for metric: "
+        "generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 0, model: x",
+    }
+}
+
+
+async def test_image_falls_back_to_next_model_on_quota_error():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, json=MODELS)
+        if "gemini-2.5-flash-image:" in str(request.url):
+            return httpx.Response(429, json=FREE_TIER_429)
+        return httpx.Response(200, json=_image_response())
+
+    native, seen = _native(handler)
+    img = await native.generate_image("kafe")
+    assert img.model != "gemini-2.5-flash-image"
+    # Keyingi safar ishlagan model birinchi sinaladi
+    await native.generate_image("kafe 2")
+    assert "gemini-2.5-flash-image:" not in str(seen[-1].url)
+
+
+async def test_all_image_models_fail_with_clear_hint():
+    from app.services.gemini_native import image_error_hint
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, json=MODELS)
+        return httpx.Response(429, json=FREE_TIER_429)
+
+    native, _ = _native(handler)
+    with pytest.raises(GeminiNativeError) as info:
+        await native.generate_image("kafe")
+    assert len(info.value.tried) == 3 and "limit: 0" in info.value.detail
+    assert "billing" in image_error_hint(info.value)
+
+
+async def test_admin_failure_text_shows_google_reason_without_key():
+    from app.bot.handlers.admin import _image_failure_text
+    from app.services.ai_service import AIRateLimitedError
+
+    cause = GeminiNativeError(429, FREE_TIER_429["error"]["message"] + " key=" + KEY)
+    cause.tried = ["gemini-2.5-flash-image"]
+    try:
+        raise AIRateLimitedError() from cause
+    except AIRateLimitedError as exc:
+        text = _image_failure_text(exc, SimpleNamespace(settings=_settings(POST_IMAGES="true")))
+    assert "limit: 0" in text and "billing" in text and "gemini-2.5-flash-image" in text
+    assert KEY not in text
+
+
+async def test_post_images_auto_shortcut_sets_auto_model():
+    from app.bot.handlers.admin import post_images_cmd
+
+    ctx = SimpleNamespace(
+        settings=_settings(GEMINI_IMAGE_MODEL="old-model"),
+        runtime=SimpleNamespace(set=AsyncMock()),
+        payments=SimpleNamespace(base_amount=0, timeout=None),
+    )
+    message = MagicMock()
+    message.answer = AsyncMock()
+    await post_images_cmd(message, SimpleNamespace(args="auto"), ctx)
+    ctx.runtime.set.assert_awaited_once_with("gemini_image_model", "")

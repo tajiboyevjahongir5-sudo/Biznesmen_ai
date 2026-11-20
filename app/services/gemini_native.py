@@ -24,6 +24,8 @@ class GeminiNativeError(Exception):
     def __init__(self, status: int | None, message: str = "") -> None:
         super().__init__(f"status={status} {message[:200]}")
         self.status = status
+        self.detail = message[:600]  # Google izohi (kalit bo'lmaydi) — admin diagnostikasi uchun
+        self.tried: list[str] = []  # rasm: sinab ko'rilgan modellar
 
 
 @dataclass(frozen=True)
@@ -52,6 +54,28 @@ class GeneratedImage:
 
 IMAGE_TYPES = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
 MAX_IMAGE_BYTES = 9 * 1024 * 1024  # Telegram rasm limiti 10 MB
+MAX_IMAGE_MODEL_TRIES = 4
+
+
+def image_error_hint(exc: GeminiNativeError) -> str:
+    """Rasm xatosini admin uchun oddiy tilda tushuntiradi."""
+    detail = exc.detail.lower()
+    if exc.status == 429 and ("limit: 0" in detail or "free_tier" in detail or "free tier" in detail):
+        return (
+            "Bu API kalit bepul tarifda: Google rasm modellari uchun bepul kvota bermaydi (limit 0). "
+            "Rasm uchun Google AI Studio'da shu kalit loyihasiga billing (to'lov) yoqilishi kerak."
+        )
+    if exc.status == 429:
+        return "Rasm modeli kvotasi tugagan yoki juda ko'p so'rov bo'ldi. Keyinroq qayta urinib ko'ring."
+    if exc.status == 404:
+        return "Kalitga ochiq rasm modeli topilmadi. /aitest bilan ro'yxatni ko'ring."
+    if exc.status == 403:
+        return "Kalitga bu modeldan foydalanish ruxsati yo'q (API yoki hudud cheklovi)."
+    if exc.status == 400:
+        return "Model bu so'rovni qabul qilmadi — /post_images model bilan boshqa model tanlang."
+    if exc.status == 422:
+        return "Model rasm qaytarmadi (xavfsizlik filtri). Qayta urinib ko'ring."
+    return "Tarmoq yoki Google serveri xatosi. Keyinroq qayta urinib ko'ring."
 
 
 def _api_root(settings: Settings) -> str:
@@ -67,7 +91,8 @@ class GeminiNative:
     def __init__(self, settings: Settings, http: httpx.AsyncClient | None = None) -> None:
         self._s = settings
         self._http = http
-        self._detected_image_model = ""
+        self._detected_image_model = ""  # oxirgi muvaffaqiyatli rasm modeli
+        self._image_model_list: list[str] = []
 
     def _client(self) -> httpx.AsyncClient:
         if self._http is None:
@@ -169,21 +194,43 @@ class GeminiNative:
         names.sort(key=lambda n: ("flash" not in n, "preview" in n or "exp" in n))
         return names
 
-    async def _image_model(self) -> str:
+    async def _image_candidates(self) -> list[str]:
+        """Sinab ko'riladigan rasm modellari: qo'lda tanlangani yoki avtomatik (ishlagani birinchi)."""
         if self._s.gemini_image_model:
-            return self._s.gemini_image_model
-        if self._detected_image_model:
-            return self._detected_image_model
-        models = await self.image_models()
+            return [self._s.gemini_image_model]
+        if not self._image_model_list:
+            self._image_model_list = await self.image_models()
+            logger.info("gemini_image_models_detected count=%d", len(self._image_model_list))
+        models = self._image_model_list[:MAX_IMAGE_MODEL_TRIES]
+        if self._detected_image_model in models:
+            models.remove(self._detected_image_model)
+            models.insert(0, self._detected_image_model)
         if not models:
-            raise GeminiNativeError(404, "rasm yaratadigan model topilmadi")
-        self._detected_image_model = models[0]
-        logger.info("gemini_image_model_detected model=%s", models[0])
-        return models[0]
+            raise GeminiNativeError(404, "kalitga ochiq rasm yaratadigan model topilmadi")
+        return models
 
     async def generate_image(self, prompt: str, aspect_ratio: str = "16:9") -> GeneratedImage:
-        """Matn bo'yicha rasm yaratadi. Rasm bo'lmasa (xavfsizlik filtri va h.k.) xato beradi."""
-        model = await self._image_model()
+        """Matn bo'yicha rasm yaratadi. Model kvotasi/ruxsati bo'lmasa, keyingi rasm modelini sinaydi."""
+        last: GeminiNativeError | None = None
+        tried: list[str] = []
+        for model in await self._image_candidates():
+            tried.append(model)
+            try:
+                image = await self._generate_image_with(model, prompt, aspect_ratio)
+            except GeminiNativeError as exc:
+                if exc.status not in (403, 404, 429):
+                    exc.tried = tried
+                    raise
+                last = exc
+                logger.warning("gemini_image_model_failed model=%s status=%s", model, exc.status)
+                continue
+            self._detected_image_model = model
+            return image
+        assert last is not None
+        last.tried = tried
+        raise last
+
+    async def _generate_image_with(self, model: str, prompt: str, aspect_ratio: str) -> GeneratedImage:
         config: dict = {"responseModalities": ["TEXT", "IMAGE"], "imageConfig": {"aspectRatio": aspect_ratio}}
         body = {"contents": [{"role": "user", "parts": [{"text": prompt}]}], "generationConfig": config}
         path = f"models/{model}:generateContent"

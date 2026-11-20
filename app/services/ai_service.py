@@ -361,7 +361,9 @@ class AIService:
         try:
             image = await self.native.generate_image(prompt)
         except GeminiNativeError as exc:
-            self._log_failure("image", 0, exc)
+            logger.warning(
+                "image_failed status=%s tried=%s detail=%s", exc.status, ",".join(exc.tried), exc.detail[:200]
+            )
             raise _map_native(exc) from exc
         logger.info("image_generated model=%s bytes=%d", image.model, len(image.data))
         return image

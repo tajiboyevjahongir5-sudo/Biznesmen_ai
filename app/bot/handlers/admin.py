@@ -38,11 +38,13 @@ from aiogram.types import (
 from app.bot.context import AppContext
 from app.bot.handlers.payment import deliver_access
 from app.bot.helpers import promo_kb, promo_text, send_parts
+from app.core.logging import redact
 from app.core.text import e, format_money, heading, quote
 from app.database import repository as repo
 from app.database.models import ChannelIdea, IdeaStatus
 from app.services.ai_service import AIServiceError
 from app.services.channel_service import image_prompt
+from app.services.gemini_native import GeminiNativeError, image_error_hint
 from app.services.payment_parser import parse_payment
 from app.services.runtime_settings import SettingError, mask_card
 
@@ -666,11 +668,34 @@ POST_IMAGES_HELP = (
 )
 
 
+def _image_failure_text(exc: AIServiceError, ctx: AppContext) -> str:
+    cause = exc.__cause__
+    lines = [f"❌ <b>Rasm yaratilmadi</b> · <code>{type(exc).__name__}</code>"]
+    if isinstance(cause, GeminiNativeError):
+        if cause.tried:
+            models = ", ".join(f"<code>{e(m)}</code>" for m in cause.tried)
+            lines.append(f"🧪 Sinab ko'rilgan modellar: {models}")
+        if cause.detail:
+            detail = redact(cause.detail, ctx.settings.secret_values())[:400]
+            lines += ["", f"📨 Google javobi ({cause.status}):", quote(e(detail), expandable=True)]
+        lines += ["", f"💡 {image_error_hint(cause)}"]
+    else:
+        lines += ["", "💡 Gemini kaliti sozlanganini va kunlik AI limiti tugamaganini tekshiring (/aitest)."]
+    if ctx.settings.post_images:
+        lines += [
+            "",
+            "<i>Muammo hal bo'lmaguncha postlar matn ko'rinishida chiqadi. O'chirish: /post_images off</i>",
+        ]
+    return "\n".join(lines)
+
+
 @router.message(Command("post_images"))
 async def post_images_cmd(message: Message, command: CommandObject, ctx: AppContext) -> None:
     s = ctx.settings
     action, _, rest = _arg(command).partition(" ")
     action = action.lower()
+    if action == "auto":  # "/post_images auto" — "/post_images model auto" bilan bir xil
+        action, rest = "model", "auto"
     if action in {"on", "off"}:
         if action == "on" and s.ai_provider != "gemini":
             await message.answer("Rasm faqat AI_PROVIDER=gemini bilan ishlaydi.")
@@ -701,10 +726,7 @@ async def post_images_cmd(message: Message, command: CommandObject, ctx: AppCont
         try:
             image = await ctx.ai.generate_image(prompt)
         except AIServiceError as exc:
-            await message.answer(
-                f"❌ Rasm yaratilmadi: <code>{type(exc).__name__}</code>\n\n"
-                "Sabab ko'pincha: kalitda billing yoqilmagan yoki rasm modeli yo'q. /aitest bilan tekshiring."
-            )
+            await message.answer(_image_failure_text(exc, ctx))
             return
         await message.answer_photo(
             BufferedInputFile(image.data, image.filename),
