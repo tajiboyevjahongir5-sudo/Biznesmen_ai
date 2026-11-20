@@ -141,14 +141,25 @@ Tahlil oxirida bot moliyaviy modelni (marja, zararsizlik nuqtasi, 3 ssenariy, qo
 **Python bilan hisoblaydi** — AI faqat kirish raqamlarini beradi. To'liq hisobot HTML fayl
 sifatida yuboriladi: brauzerda ochiladi va "Chop etish → PDF" bilan PDF qilib saqlanadi.
 
+Ovozli xabarlar ham tushuniladi (Gemini matnga aylantiradi, so'ng oddiy suhbat davom etadi).
+
+Tahlildan `FOLLOWUP_DAYS` (standart 7) kun o'tgach bot "Kichik test qanday o'tdi?" deb so'raydi
+va javobga qarab rejani yangilaydi (`/new` — yangi g'oya).
+
+Internet qidiruvi: admin `/websearch on` yuborsa, tahlil va kunlik g'oyalarda Gemini Google
+qidiruvidan foydalaniladi (manbalar — Google qaytargan haqiqiy havolalar). Bepul tarifda kunlik
+cheklangan, billing yoqilgan bo'lsa limitdan oshgani pullik.
+
 AI band bo'lsa, xabar navbatga olinadi va bot 1, 3 va 7 daqiqadan keyin qayta urinib,
-javobni o'zi yuboradi. Doimiy xatolar haqida adminlarga xabar boradi (15 daqiqada bir marta).
+javobni o'zi yuboradi. Navbat bazada saqlanadi — bot qayta ishga tushsa ham yo'qolmaydi;
+kutilayotgan to'lov taymerlari ham tiklanadi. Doimiy xatolar haqida adminlarga xabar boradi (15 daqiqada bir marta).
 
 Admin: `/admin` (statistika va AI xarajati), `/research` (izlanishni hozir boshlash),
 `/ideas`, `/publish id`, `/reject id`, `/payments`, `/confirm id`, `/block tg_id`,
 `/unblock tg_id`, `/promo`, `/settings` (kanal, karta, narx, kunlik g'oyalar va boshqalar),
 `/stats` (foydalanuvchilar, faollik, konversiya, tushum, obunachilar),
 `/broadcast` (xabarga reply qilib — hammaga yuborish, tasdiqlash bilan),
+`/websearch on|off`, `/followup_days 7`, `/parsetest` (bank xabariga reply qilib — parser qanday o'qishini ko'rish),
 `/sub_days 30` (oylik obuna; muddat tugashidan 3 kun oldin eslatma, tugagach kanaldan
 chiqariladi; `0` — umrbod kirish).
 

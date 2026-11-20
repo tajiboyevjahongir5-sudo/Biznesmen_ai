@@ -8,11 +8,14 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.agents.analyst import AnalystAgent
+from app.agents.analyst import AnalystAgent, MarketAnalysis
+from app.agents.coach import CoachAgent
 from app.agents.interviewer import InterviewerAgent, Turn
 from app.agents.prompt_engineer import PromptEngineerAgent
 from app.core.finance import build_model, finance_summary_for_ai, render_finance
@@ -51,13 +54,17 @@ class Orchestrator:
         prompt_engineer: PromptEngineerAgent,
         min_questions: int,
         max_questions: int,
+        coach: CoachAgent | None = None,
+        followup_days: Callable[[], int] = lambda: 0,
     ) -> None:
         self._sf = session_factory
         self.interviewer = interviewer
         self.analyst = analyst
         self.prompt_engineer = prompt_engineer
+        self.coach = coach
         self.min_q = min_questions
         self.max_q = max_questions
+        self._followup_days = followup_days
 
     async def handle_user_text(
         self, *, telegram_id: int, user_db_id: int, text: str, user_name: str = ""
@@ -69,6 +76,16 @@ class Orchestrator:
                 return TurnResult(
                     messages=["Tahlil hali davom etmoqda. Natija tayyor bo'lishi bilan yuboraman."]
                 )
+            followup_id = project.id if project and project.status == ProjectStatus.FOLLOWUP else None
+        if followup_id is not None and self.coach is not None:
+            result = await self._followup_turn(telegram_id, user_db_id, followup_id, text, user_name)
+            if result is not None:
+                return result
+        async with self._sf() as session:
+            project = await repo.get_active_project(session, user_db_id)
+            if project is not None and project.status == ProjectStatus.FOLLOWUP:
+                project.status = ProjectStatus.DONE  # coach yo'q yoki yangi g'oya: kuzatuv tugadi
+                project = None
             new_project = project is None
             added_msg_id: int | None = None
             if project is None:
@@ -192,6 +209,8 @@ class Orchestrator:
             await repo.save_analysis(session, project_id, "analyst", analysis_json)
             await repo.save_prompt(session, project_id, super_prompt.prompt)
             project.status = ProjectStatus.DONE
+            days = self._followup_days()
+            project.followup_at = datetime.now(UTC) + timedelta(days=days) if days > 0 else None
             title = project.title or idea[:80]
             await session.commit()
 
@@ -216,6 +235,82 @@ class Orchestrator:
             project = await repo.get_active_project(session, user_db_id)
             if project is None:
                 return False
-            project.status = ProjectStatus.CANCELLED
+            project.status = (
+                ProjectStatus.DONE if project.status == ProjectStatus.FOLLOWUP else ProjectStatus.CANCELLED
+            )
             await session.commit()
             return True
+
+    async def _followup_turn(
+        self, telegram_id: int, user_db_id: int, project_id: int, text: str, user_name: str
+    ) -> TurnResult | None:
+        """Kuzatuv suhbati. Foydalanuvchi yangi g'oya yozsa — None (oddiy suhbat boshlanadi)."""
+        async with self._sf() as session:
+            project = await repo.get_project(session, user_db_id, project_id)
+            if project is None:
+                return None
+            msg_id = await repo.add_message(session, project_id, "user", text)
+            turns = [Turn(role=m.role, text=m.message) for m in await repo.get_messages(session, project_id)]
+            analysis_json = await repo.latest_analysis(session, user_db_id, project_id)
+            idea = project.idea
+            await session.commit()
+        try:
+            step = await self.coach.run(
+                user_id=telegram_id,
+                idea=idea,
+                analysis_summary=_analysis_digest(analysis_json),
+                turns=turns[-14:],
+                user_name=user_name,
+            )
+        except Exception:
+            await self._rollback_turn(project_id, False, msg_id)
+            raise
+        async with self._sf() as session:
+            project = await session.get(BusinessProject, project_id)
+            if step.intent == "new_idea":
+                await session.delete(await session.get(Conversation, msg_id))
+                project.status = ProjectStatus.DONE
+                await session.commit()
+                return None
+            await repo.add_message(session, project_id, "assistant", step.reply)
+            if step.updated_next_steps:
+                await repo.save_analysis(
+                    session, project_id, "coach", json.dumps(step.updated_next_steps, ensure_ascii=False)
+                )
+            if step.intent == "stop":
+                project.status = ProjectStatus.DONE
+            await session.commit()
+        messages = [format_reply(step.reply)]
+        if step.updated_next_steps:
+            steps = "\n".join(f"{i}. {format_reply(x)}" for i, x in enumerate(step.updated_next_steps, 1))
+            messages.append("🗺 <b>Yangilangan reja</b>\n\n" + steps)
+        if step.intent != "stop":
+            messages[-1] += "\n\n<i>Yangi g'oya bilan boshlash uchun: /new</i>"
+        logger.info(
+            "followup_turn user=%s project=%s intent=%s", user_ref(telegram_id), project_id, step.intent
+        )
+        return TurnResult(messages=messages, project_id=project_id, reaction=step.reaction)
+
+
+def _analysis_digest(analysis_json: str | None) -> str:
+    """Coach uchun oldingi tahlilning qisqa mazmuni."""
+    if not analysis_json:
+        return ""
+    try:
+        a = MarketAnalysis.model_validate_json(analysis_json)
+    except ValueError:
+        return ""
+    lines = [
+        f"Xulosa: {a.summary}",
+        f"Qaror: {a.verdict}",
+        f"Kichik test (MVP): {a.mvp_test}",
+        "Keyingi qadamlar: " + "; ".join(a.next_steps),
+        "Asosiy xavflar: " + "; ".join(r.risk for r in a.failure_risks[:5]),
+    ]
+    f = a.finance
+    if f.price_per_unit:
+        lines.append(
+            f"Moliya (reja): narx {f.price_per_unit}, tannarx {f.variable_cost_per_unit}, "
+            f"doimiy xarajat {f.monthly_fixed_costs}/oy, realistik sotuv {f.units_realistic}/oy"
+        )
+    return "\n".join(lines)

@@ -28,7 +28,7 @@ from app.database.models import (
     User,
 )
 
-ACTIVE_STATUSES = (ProjectStatus.INTERVIEWING, ProjectStatus.ANALYZING)
+ACTIVE_STATUSES = (ProjectStatus.INTERVIEWING, ProjectStatus.ANALYZING, ProjectStatus.FOLLOWUP)
 
 
 # --------------------------------------------------------------------- users
@@ -73,7 +73,8 @@ async def create_project(session: AsyncSession, user_id: int, idea: str) -> Busi
             )
         )
     ).all():
-        old.status = ProjectStatus.CANCELLED
+        # Kuzatuvdagi loyiha tayyor bo'lib qoladi (tarixdan yo'qolmaydi).
+        old.status = ProjectStatus.DONE if old.status == ProjectStatus.FOLLOWUP else ProjectStatus.CANCELLED
     project = BusinessProject(user_id=user_id, idea=idea, title=idea[:80])
     session.add(project)
     await session.flush()
@@ -269,3 +270,23 @@ async def latest_analysis(session: AsyncSession, user_id: int, project_id: int) 
         .order_by(AgentAnalysis.id.desc())
         .limit(1)
     )
+
+
+async def due_followups(
+    session: AsyncSession, now: datetime, limit: int = 30
+) -> list[tuple[BusinessProject, int]]:
+    """Kuzatuv vaqti kelgan tayyor loyihalar va egasining telegram_id si."""
+    rows = await session.execute(
+        select(BusinessProject, User.telegram_id)
+        .join(User, User.id == BusinessProject.user_id)
+        .where(
+            BusinessProject.status == ProjectStatus.DONE,
+            BusinessProject.followup_at.is_not(None),
+            BusinessProject.followup_at <= now,
+            BusinessProject.followup_sent_at.is_(None),
+            User.is_blocked.is_(False),
+        )
+        .order_by(BusinessProject.followup_at)
+        .limit(limit)
+    )
+    return [(p, tg) for p, tg in rows.all()]

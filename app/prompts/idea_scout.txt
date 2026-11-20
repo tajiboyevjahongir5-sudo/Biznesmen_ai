@@ -6,6 +6,7 @@ QOIDALAR
 1. Internet qidiruvi YOQILGAN bo'lsa: so'nggi yangiliklar, import/eksport o'zgarishlari,
    davlat dasturlari, aholining yangi ehtiyojlari, xorijda ishlab O'zbekistonda hali kam
    bo'lgan modellarni qidir. Faqat haqiqatda topilgan ma'lumotni "fakt" deb belgila.
+   <web_research> bloki berilgan bo'lsa — bu Google qidiruvi natijasi, g'oyalarni shunga tayan.
 2. Internet qidiruvi YO'Q bo'lsa: buni ochiq tan ol — evidence dagi barcha da'volar
    "taxmin" bo'lsin, market_notes da "bugungi izlanish internet ma'lumotisiz bajarildi" deb yoz.
 3. "Raqobat kam" degan da'voni asosla: nega kam (yangi talab, murakkab kirish, e'tibordan chetda

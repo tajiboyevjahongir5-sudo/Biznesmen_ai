@@ -16,11 +16,13 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand
 
 from app.agents.analyst import AnalystAgent
+from app.agents.coach import CoachAgent
 from app.agents.idea_scout import IdeaScoutAgent
 from app.agents.interviewer import InterviewerAgent
 from app.agents.prompt_engineer import PromptEngineerAgent
 from app.bot.context import AppContext
 from app.bot.handlers import admin, errors, payment, user
+from app.bot.jobs import job_worker_loop
 from app.bot.middlewares.common import ThrottlingMiddleware, UserContextMiddleware
 from app.config import Settings, get_settings
 from app.core.logging import setup_logging
@@ -31,7 +33,12 @@ from app.services.ai_service import AIService
 from app.services.channel_service import ChannelService
 from app.services.payment_service import PaymentService
 from app.services.runtime_settings import RuntimeSettings
-from app.services.scheduler import daily_research_loop, payment_sweeper_loop, subscription_loop
+from app.services.scheduler import (
+    daily_research_loop,
+    followup_loop,
+    payment_sweeper_loop,
+    subscription_loop,
+)
 from app.services.subscription_service import SubscriptionService
 
 logger = logging.getLogger("app")
@@ -61,6 +68,8 @@ def build_context(settings: Settings, session_factory, runtime: RuntimeSettings)
             prompt_engineer,
             settings.min_interview_questions,
             settings.max_interview_questions,
+            coach=CoachAgent(ai),
+            followup_days=lambda: settings.followup_days,
         ),
         payments=PaymentService(
             session_factory, settings.channel_price_uzs, settings.payment_timeout_seconds
@@ -119,10 +128,15 @@ async def run() -> None:
         logger.info("Internet qidiruvi o'chirilgan (RESEARCH_PROVIDER=none)")
 
     dp = build_dispatcher(ctx)
+    restored = await payment.restore_timers(bot, ctx)  # redeploydan keyin taymerlar davom etadi
+    if restored:
+        logger.info("To'lov taymerlari tiklandi: %d ta", restored)
     tasks = [
         asyncio.create_task(daily_research_loop(bot, ctx)),
         asyncio.create_task(payment_sweeper_loop(ctx)),
         asyncio.create_task(subscription_loop(bot, ctx)),
+        asyncio.create_task(job_worker_loop(bot, ctx)),
+        asyncio.create_task(followup_loop(bot, ctx)),
     ]
     logger.info("Bot ishga tushdi: @%s", ctx.bot_username)
     try:

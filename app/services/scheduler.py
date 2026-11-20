@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot
@@ -103,4 +103,54 @@ async def subscription_loop(bot: Bot, ctx: AppContext, interval: float = 1800.0)
             raise
         except Exception:  # noqa: BLE001
             logger.exception("subscription_loop_failed")
+        await asyncio.sleep(interval)
+
+
+FOLLOWUP_QUIET_HOURS = range(9, 21)  # faqat kunduzi yozamiz (mahalliy vaqt)
+
+
+async def followup_loop(bot: Bot, ctx: AppContext, interval: float = 1800.0) -> None:
+    """Tahlildan N kun o'tgach "MVP testi qanday o'tdi?" deb so'raydi."""
+    from aiogram.exceptions import TelegramAPIError
+
+    from app.core.text import e
+    from app.database import repository as repo
+    from app.database.models import ProjectStatus
+
+    while True:
+        try:
+            local_hour = datetime.now(ZoneInfo(ctx.settings.timezone)).hour
+            if ctx.settings.followup_days and local_hour in FOLLOWUP_QUIET_HOURS:
+                now = datetime.now(UTC)
+                async with ctx.session_factory() as session:
+                    due = await repo.due_followups(session, now)
+                    for project, tg_id in due:
+                        active = await repo.get_active_project(session, project.user_id)
+                        if active is not None:
+                            # Foydalanuvchi hozir boshqa g'oya ustida — keyinroq so'raymiz.
+                            project.followup_at = now + timedelta(days=1)
+                            continue
+                        name = e((project.title or project.idea)[:80])
+                        try:
+                            await bot.send_message(
+                                tg_id,
+                                f"👋 Salom! Bir necha kun oldin <b>{name}</b> g'oyasini "
+                                "tahlil qilgan edik.\n\n"
+                                "🧪 Kichik test (MVP) qanday o'tdi? Mijozlar, sotuv yoki qiyinchiliklar "
+                                "haqida qisqacha yozing (yoki ovozli xabar yuboring) — natijaga qarab "
+                                "rejani birga yangilaymiz.\n\n"
+                                "<i>Yangi g'oya bilan boshlash uchun: /new</i>",
+                            )
+                            project.status = ProjectStatus.FOLLOWUP
+                        except TelegramAPIError:
+                            logger.info("followup_send_failed project=%d", project.id)
+                        project.followup_sent_at = now
+                        await asyncio.sleep(0.1)
+                    await session.commit()
+                if due:
+                    logger.info("followups_processed count=%d", len(due))
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            logger.exception("followup_loop_failed")
         await asyncio.sleep(interval)

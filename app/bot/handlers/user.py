@@ -2,34 +2,27 @@
 
 from __future__ import annotations
 
-import asyncio
+import io
 import logging
 import re
-from dataclasses import dataclass
 
 from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command, CommandObject, CommandStart
-from aiogram.types import BufferedInputFile, Message, ReactionTypeEmoji
+from aiogram.types import Message
 from aiogram.utils.chat_action import ChatActionSender
 
 from app.agents.analyst import MarketAnalysis
 from app.bot.context import AppContext
-from app.bot.helpers import alert_admins, is_channel_member, maybe_send_promo, send_parts
+from app.bot.helpers import is_channel_member, maybe_send_promo, send_parts
+from app.bot.jobs import TRANSIENT_AI_ERRORS, Job, enqueue, has_pending, react, run_job, send_report
 from app.core.finance import build_model
 from app.core.logging import user_ref
 from app.core.report import build_report_html
 from app.core.security import contains_sensitive_data, detect_prompt_injection, sanitize_user_text
 from app.core.text import e, render_prompt
 from app.database import repository as repo
-from app.services.ai_service import (
-    AIBadResponseError,
-    AIBusyError,
-    AIRateLimitedError,
-    AIServiceError,
-    AITimeoutError,
-    AIUnavailableError,
-)
+from app.services.ai_service import AIServiceError
 from app.services.channel_service import DEEP_LINK_PREFIX
 
 logger = logging.getLogger(__name__)
@@ -129,6 +122,7 @@ async def history_cmd(message: Message, ctx: AppContext, db_user_id: int) -> Non
         "analyzing": "tahlil qilinmoqda",
         "done": "tayyor",
         "failed": "xato",
+        "followup": "kuzatuvda",
         "cancelled": "bekor qilingan",
     }
     lines = ["<b>Loyihalaringiz</b>", ""]
@@ -234,9 +228,62 @@ async def channel_cmd(message: Message, ctx: AppContext, bot: Bot) -> None:
 @router.message(F.text & ~F.text.startswith("/"))
 async def conversation(message: Message, ctx: AppContext, db_user_id: int, bot: Bot) -> None:
     """Asosiy suhbat: har qanday oddiy matn — g'oya yoki savolga javob."""
+    await _process_text(message, ctx, db_user_id, bot, message.text or "")
+
+
+@router.message(F.voice | F.audio | F.video_note)
+async def voice_message(message: Message, ctx: AppContext, db_user_id: int, bot: Bot) -> None:
+    """Ovozli xabar: Gemini matnga aylantiradi, keyin oddiy matn kabi davom etadi."""
+    media = message.voice or message.audio or message.video_note
+    s = ctx.settings
+    if s.ai_provider != "gemini":
+        await message.answer("🎙 Ovozli xabarlar hozircha qo'llab-quvvatlanmaydi. Iltimos, matn bilan yozing.")
+        return
+    if (media.duration or 0) > s.max_voice_seconds:
+        await message.answer(
+            f"🎙 Ovozli xabar juda uzun. Iltimos, {s.max_voice_seconds // 60} daqiqagacha yuboring "
+            "yoki matn bilan yozing."
+        )
+        return
+    if (media.file_size or 0) > MAX_VOICE_BYTES:
+        await message.answer("🎙 Fayl juda katta. Qisqaroq ovozli xabar yuboring.")
+        return
+    tg_id = message.from_user.id
+    if not await ctx.user_locks.try_acquire(tg_id):
+        await message.answer("⏳ Oldingi xabaringiz ustida ishlayapman, biroz kuting.")
+        return
+    try:
+        await react(bot, message.chat.id, message.message_id, "👀")
+        async with ChatActionSender.typing(bot=bot, chat_id=message.chat.id):
+            buf = await bot.download(media, destination=io.BytesIO())
+            mime = getattr(media, "mime_type", None) or ("video/mp4" if message.video_note else "audio/ogg")
+            text = await ctx.ai.transcribe(user_id=tg_id, audio=buf.getvalue(), mime=mime)
+    except TRANSIENT_AI_ERRORS:
+        await message.answer("⏳ AI hozir band, ovozni tinglay olmadim. Bir daqiqadan keyin qayta yuboring.")
+        return
+    except AIServiceError as exc:
+        await message.answer(exc.user_message)
+        return
+    except TelegramAPIError:
+        await message.answer("Ovozli xabarni yuklab bo'lmadi. Qayta yuboring.")
+        return
+    finally:
+        await ctx.user_locks.release(tg_id)
+    if len(text) < 2:
+        await message.answer("🎙 Ovozdan gap eshitilmadi. Iltimos, qayta yozib yuboring.")
+        return
+    logger.info("voice_transcribed user=%s chars=%d", user_ref(tg_id), len(text))
+    await message.answer(f"🎙 <i>{e(text[:600])}{'…' if len(text) > 600 else ''}</i>")
+    await _process_text(message, ctx, db_user_id, bot, text)
+
+
+MAX_VOICE_BYTES = 15 * 1024 * 1024
+
+
+async def _process_text(message: Message, ctx: AppContext, db_user_id: int, bot: Bot, raw: str) -> None:
     tg_id = message.from_user.id
     s = ctx.settings
-    check = sanitize_user_text(message.text, min_chars=2, max_chars=s.max_input_chars)
+    check = sanitize_user_text(raw, min_chars=2, max_chars=s.max_input_chars)
     if not check.ok:
         await message.answer(check.error)
         return
@@ -254,145 +301,36 @@ async def conversation(message: Message, ctx: AppContext, db_user_id: int, bot: 
     if not await ctx.user_locks.try_acquire(tg_id):
         await message.answer("⏳ Oldingi xabaringiz ustida ishlayapman, biroz kuting.")
         return
-    job = _Job(message, tg_id, db_user_id, text, (message.from_user.first_name or "")[:40])
-    queued = False
     try:
-        await _react(message, "👀")  # "o'qidim, o'ylayapman"
-        await _run_job(bot, ctx, job)
-    except TRANSIENT_AI_ERRORS as exc:
-        # AI vaqtincha ishlamayapti: xabarni navbatga olamiz va keyin o'zimiz javob beramiz.
-        await message.answer(
-            "⏳ AI hozir juda band. Xabaringizni <b>navbatga qo'ydim</b> — bir necha daqiqada "
-            "javobni o'zim yuboraman, qayta yozish shart emas."
-        )
-        logger.info("ai_job_queued user=%s error=%s", user_ref(tg_id), type(exc).__name__)
-        task = asyncio.create_task(_retry_job_later(bot, ctx, job))
-        _background.add(task)
-        task.add_done_callback(_background.discard)
-        queued = True  # qulfni fon vazifasi o'zi bo'shatadi
-    except AIServiceError as exc:
-        await message.answer(exc.user_message)
-    finally:
-        if not queued:
-            await ctx.user_locks.release(tg_id)
-
-
-# AI vaqtincha band/sekin bo'lganda qayta urinish mantiqli bo'lgan xatolar.
-TRANSIENT_AI_ERRORS = (
-    AIBusyError,
-    AITimeoutError,
-    AIUnavailableError,
-    AIRateLimitedError,
-    AIBadResponseError,
-)
-RETRY_DELAYS = (60, 120, 240)  # soniya
-_background: set[asyncio.Task] = set()
-
-
-@dataclass
-class _Job:
-    message: Message
-    tg_id: int
-    db_user_id: int
-    text: str
-    user_name: str
-    phase: str = "turn"  # turn | analysis
-    project_id: int | None = None
-
-
-async def _run_job(bot: Bot, ctx: AppContext, job: _Job) -> None:
-    """Suhbat qadamini (va kerak bo'lsa tahlilni) bajaradi. AI xatolarini yuqoriga uzatadi."""
-    chat_id = job.message.chat.id
-    if job.phase == "turn":
-        async with ChatActionSender.typing(bot=bot, chat_id=chat_id):
-            result = await ctx.orchestrator.handle_user_text(
-                telegram_id=job.tg_id, user_db_id=job.db_user_id, text=job.text, user_name=job.user_name
+        if await has_pending(ctx, tg_id):
+            await message.answer(
+                "⏳ Oldingi xabaringiz navbatda turibdi — AI bo'shashi bilan javob beraman. "
+                "Biroz kuting, keyin davom etamiz."
             )
-        if result.reaction:
-            await _react(job.message, result.reaction)
-        await send_parts(bot, chat_id, result.messages)
-        if result.looking_for_idea:
-            await maybe_send_promo(bot, ctx, job.tg_id, chat_id)
-        if not (result.run_analysis and result.project_id):
             return
-        job.phase, job.project_id = "analysis", result.project_id
-        await bot.send_message(
-            chat_id,
-            "📊 Endi bozor, talab, raqobat va moliyani chuqur tahlil qilaman.\n"
-            "⏳ Bu 1-3 daqiqa vaqt olishi mumkin.",
+        job = Job(
+            chat_id=message.chat.id,
+            message_id=message.message_id,
+            tg_id=tg_id,
+            db_user_id=db_user_id,
+            text=text,
+            user_name=(message.from_user.first_name or "")[:40],
         )
-    await _run_analysis(bot, ctx, job)
-
-
-async def _run_analysis(bot: Bot, ctx: AppContext, job: _Job) -> None:
-    chat_id = job.message.chat.id
-    async with ChatActionSender.typing(bot=bot, chat_id=chat_id):
-        output = await ctx.orchestrator.run_analysis(
-            telegram_id=job.tg_id, user_db_id=job.db_user_id, project_id=job.project_id
-        )
-    await send_parts(bot, chat_id, output.parts)
-    if output.report_html:
-        await send_report(bot, chat_id, job.project_id, output.report_html)
-    await bot.send_message(
-        chat_id,
-        "✅ Tahlil tugadi! Promptni keyin ham /history orqali topasiz.\n\n"
-        "💡 Boshqa g'oyangiz bo'lsa, shunchaki yozing — yangi suhbat boshlaymiz.",
-    )
-    await maybe_send_promo(bot, ctx, job.tg_id, chat_id)
-
-
-async def send_report(bot: Bot, chat_id: int, project_id: int, html_doc: str) -> None:
-    """To'liq hisobotni HTML fayl sifatida yuboradi (brauzerda ochiladi, PDF qilib saqlash mumkin)."""
-    file = BufferedInputFile(html_doc.encode("utf-8"), filename=f"biznes-tahlil-{project_id}.html")
-    try:
-        await bot.send_document(
-            chat_id,
-            file,
-            caption="📄 To'liq hisobot. Brauzerda oching — kerak bo'lsa «Chop etish → PDF» qilib saqlang.",
-        )
-    except TelegramAPIError:
-        logger.warning("report_send_failed project=%s", project_id)
-
-
-async def _retry_job_later(bot: Bot, ctx: AppContext, job: _Job) -> None:
-    """Navbatdagi xabarni bir necha marta kechiktirib qayta ishlaydi; oxirida qulfni bo'shatadi."""
-    chat_id = job.message.chat.id
-    last: BaseException | None = None
-    try:
-        for delay in RETRY_DELAYS:
-            await asyncio.sleep(delay)
-            try:
-                await _run_job(bot, ctx, job)
-                logger.info("ai_job_done_after_retry user=%s", user_ref(job.tg_id))
-                return
-            except TRANSIENT_AI_ERRORS as exc:
-                last = exc
-                logger.info("ai_job_retry_failed user=%s error=%s", user_ref(job.tg_id), type(exc).__name__)
-            except AIServiceError as exc:
-                await bot.send_message(chat_id, exc.user_message)
-                return
-        await bot.send_message(
-            chat_id,
-            "😔 Kechirasiz, AI xizmati hali ham ishlamayapti. Iltimos, birozdan keyin "
-            "xabaringizni qayta yuboring.",
-        )
-        await alert_admins(
-            bot, ctx, "ai_down", f"⚠️ AI bir necha urinishdan keyin ham javob bermadi: {type(last).__name__}"
-        )
-    except asyncio.CancelledError:
-        raise
-    except Exception:  # noqa: BLE001 — fon vazifasi botni to'xtatmasin
-        logger.exception("ai_job_retry_crashed")
+        await react(bot, job.chat_id, job.message_id, "👀")  # "o'qidim, o'ylayapman"
+        try:
+            await run_job(bot, ctx, job)
+        except TRANSIENT_AI_ERRORS as exc:
+            # AI vaqtincha ishlamayapti: xabarni bazadagi navbatga olamiz, javobni keyin o'zimiz beramiz.
+            await enqueue(ctx, job)
+            logger.info("ai_job_queued user=%s error=%s", user_ref(tg_id), type(exc).__name__)
+            await message.answer(
+                "⏳ AI hozir juda band. Xabaringizni <b>navbatga qo'ydim</b> — bir necha daqiqada "
+                "javobni o'zim yuboraman, qayta yozish shart emas."
+            )
+        except AIServiceError as exc:
+            await message.answer(exc.user_message)
     finally:
-        await ctx.user_locks.release(job.tg_id)
-
-
-async def _react(message: Message, emoji: str) -> None:
-    """Xabarga reaksiya qo'yadi; Telegram rad etsa (masalan, reaksiyalar o'chirilgan) — jim o'tadi."""
-    try:
-        await message.react([ReactionTypeEmoji(emoji=emoji)])
-    except Exception:  # noqa: BLE001 — reaksiya ixtiyoriy bezak, suhbatni to'xtatmasin
-        logger.debug("reaction_failed", exc_info=True)
+        await ctx.user_locks.release(tg_id)
 
 
 @router.message(F.text.startswith("/"))
@@ -402,4 +340,4 @@ async def unknown_command(message: Message) -> None:
 
 @router.message()
 async def non_text(message: Message) -> None:
-    await message.answer("Hozircha faqat matnli xabarlarni tushunaman. G'oyangizni yozib yuboring.")
+    await message.answer("Men matn va ovozli xabarlarni tushunaman. G'oyangizni yozing yoki aytib yuboring 🎙")

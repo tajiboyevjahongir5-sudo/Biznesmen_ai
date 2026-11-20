@@ -271,3 +271,10 @@ class PaymentService:
             expired = await self.expire_stale(session)
             await session.commit()
             return expired
+
+    async def list_pending(self) -> list[PaymentReservation]:
+        async with self._sf() as session:
+            rows = await session.scalars(
+                select(PaymentReservation).where(PaymentReservation.status == PaymentStatus.PENDING)
+            )
+            return list(rows.all())

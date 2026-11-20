@@ -49,6 +49,7 @@ class ProjectStatus:
     DONE = "done"
     CANCELLED = "cancelled"
     FAILED = "failed"
+    FOLLOWUP = "followup"  # tahlildan keyin natijalar bo'yicha kuzatuv suhbati
 
 
 class BusinessProject(Base):
@@ -63,6 +64,8 @@ class BusinessProject(Base):
     status: Mapped[str] = mapped_column(String(20), default=ProjectStatus.INTERVIEWING, index=True)
     pending_question: Mapped[str | None] = mapped_column(Text)
     questions_asked: Mapped[int] = mapped_column(Integer, default=0)
+    followup_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    followup_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
@@ -231,3 +234,22 @@ class Subscription(Base):
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     reminded: Mapped[bool] = mapped_column(Boolean, default=False)
     last_reservation_id: Mapped[int | None] = mapped_column(Integer)
+
+
+class PendingJob(Base):
+    """AI band bo'lganda navbatga olingan foydalanuvchi xabari (bot qayta ishga tushsa ham saqlanadi)."""
+
+    __tablename__ = "pending_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    telegram_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    chat_id: Mapped[int] = mapped_column(BigInteger)
+    message_id: Mapped[int] = mapped_column(BigInteger)
+    text: Mapped[str] = mapped_column(Text)
+    user_name: Mapped[str | None] = mapped_column(String(64))
+    phase: Mapped[str] = mapped_column(String(16), default="turn")
+    project_id: Mapped[int | None] = mapped_column(Integer)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    next_run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

@@ -121,6 +121,10 @@ class Settings(BaseSettings):
     payment_card_number: str = Field(default="", alias="PAYMENT_CARD_NUMBER")
     payment_card_holder: str = Field(default="", alias="PAYMENT_CARD_HOLDER")
     payment_timeout_seconds: int = Field(default=300, ge=60, le=3600, alias="PAYMENT_TIMEOUT_SECONDS")
+    # Tahlildan necha kun keyin "MVP testi qanday o'tdi?" deb so'raladi. 0 — o'chirilgan.
+    followup_days: int = Field(default=7, ge=0, le=90, alias="FOLLOWUP_DAYS")
+    # Ovozli xabarning eng uzun davomiyligi (soniya).
+    max_voice_seconds: int = Field(default=180, ge=10, le=900, alias="MAX_VOICE_SECONDS")
     # Obuna muddati (kun). 0 — bir martalik to'lov, umrbod kirish.
     subscription_days: int = Field(default=0, ge=0, le=3650, alias="SUBSCRIPTION_DAYS")
     invite_link_ttl_hours: int = Field(default=24, ge=1, le=720, alias="INVITE_LINK_TTL_HOURS")
@@ -144,8 +148,8 @@ class Settings(BaseSettings):
     @classmethod
     def _validate_provider(cls, value: str) -> str:
         value = value.strip().lower()
-        if value not in {"none", "openai_web"}:
-            raise ValueError("RESEARCH_PROVIDER faqat 'none' yoki 'openai_web' bo'lishi mumkin")
+        if value not in {"none", "openai_web", "gemini_search"}:
+            raise ValueError("RESEARCH_PROVIDER: 'none', 'openai_web' yoki 'gemini_search'")
         return value
 
     @field_validator("ai_provider")
@@ -206,8 +210,10 @@ class Settings(BaseSettings):
 
     @property
     def web_search_enabled(self) -> bool:
-        # OpenAI web_search vositasi faqat OpenAI provayderida mavjud.
-        return self.research_provider == "openai_web" and self.ai_provider == "openai"
+        # Har bir provayder o'z qidiruv vositasi bilan ishlaydi.
+        if self.ai_provider == "gemini":
+            return self.research_provider == "gemini_search"
+        return self.research_provider == "openai_web"
 
     @property
     def ai_api_key(self) -> str:

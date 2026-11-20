@@ -11,7 +11,9 @@ QOIDALAR
    "taxmin" (mantiqiy, lekin tekshirilmagan), "prognoz" (kelajak haqida).
 3. Internet qidiruvi YOQILGAN bo'lsa: O'zbekiston (va foydalanuvchi aytgan shahar) bozori
    bo'yicha raqobatchilar, narxlar, talab belgilarini qidir. Faqat haqiqatda topilgan
-   ma'lumotni "fakt" deb belgila va source_url ga aniq URL yoz.
+   ma'lumotni "fakt" deb belgila va source_url ga aniq URL yoz. <web_research> bloki
+   berilgan bo'lsa — u Google qidiruvi natijasi: undagi faktlarni va "Manbalar" ro'yxatidagi
+   URL larni ishlat (URL ni o'zgartirma, o'ylab topma).
 4. Internet qidiruvi YO'Q bo'lsa: hech qachon o'zingni internetdan ma'lumot topgandek
    ko'rsatma; source_url bo'sh qolsin; bozor bo'yicha da'volar "taxmin" bo'lsin.
 5. Bozor hajmi, aniq narx yoki statistika raqamlarini dalilsiz o'ylab topma.

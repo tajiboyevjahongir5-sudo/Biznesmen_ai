@@ -82,7 +82,11 @@ def build_input(idea: str, conversation: str, notes: str, web: bool) -> str:
         parts.append(wrap_untrusted(notes, "research_notes"))
     parts.append(
         "Internet qidiruvi: "
-        + ("YOQILGAN — web_search vositasidan foydalan." if web else "YO'Q — faqat taxminlar bilan ishla.")
+        + (
+            "YOQILGAN — <web_research> blokidagi (yoki web_search vositasi) topilgan ma'lumotlardan foydalan."
+            if web
+            else "YO'Q — faqat taxminlar bilan ishla."
+        )
     )
     return "\n\n".join(parts)
 

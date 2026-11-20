@@ -36,6 +36,7 @@ from app.core.text import e, format_money
 from app.database import repository as repo
 from app.database.models import ChannelIdea, IdeaStatus
 from app.services.ai_service import AIServiceError
+from app.services.payment_parser import parse_payment
 from app.services.runtime_settings import SettingError, mask_card
 
 logger = logging.getLogger(__name__)
@@ -118,6 +119,8 @@ async def admin_home(message: Message, ctx: AppContext) -> None:
         "/settings — kanal, karta, narx va boshqa sozlamalar",
         "/stats — batafsil statistika",
         "/broadcast — hammaga xabar yuborish",
+        "/websearch on|off — internet (Google) qidiruvi",
+        "/parsetest — bank xabarini parser qanday o'qishini tekshirish",
     ]
     await message.answer("\n".join(lines))
 
@@ -289,6 +292,8 @@ SETTINGS_HELP = (
     "/price 50000 — kanalga kirish narxi (so'm)\n"
     "/pay_minutes 5 — to'lov uchun vaqt (daqiqa)\n"
     "/sub_days 30 — obuna muddati (0 — umrbod)\n"
+    "/followup_days 7 — tahlildan keyin kuzatuv (0 — o'chiq)\n"
+    "/websearch on|off — internet qidiruvi\n"
     "/channel_title Nomi — kanal nomi (reklamada)\n"
     "/daily_ideas 2 — kuniga nechta g'oya\n"
     "/research_time 09:00 — kunlik izlanish vaqti\n"
@@ -311,6 +316,8 @@ async def settings_cmd(message: Message, ctx: AppContext) -> None:
         f"Karta: {mask_card(s.payment_card_number)}",
         f"Karta egasi: {e(s.payment_card_holder) or 'kiritilmagan'}",
         f"Narx: {format_money(s.channel_price_uzs)} so'm",
+        f"Internet qidiruvi: {'yoqilgan' if s.web_search_enabled else 'o`chirilgan'}",
+        f"Kuzatuv: {f'{s.followup_days} kundan keyin' if s.followup_days else 'o`chirilgan'}",
         f"Obuna muddati: {f'{s.subscription_days} kun' if s.subscription_days else 'umrbod (bir martalik)'}",
         f"To'lov vaqti: {s.payment_timeout_seconds // 60} daqiqa",
         f"Kanal nomi: {e(s.ideas_channel_title)}",
@@ -598,3 +605,72 @@ async def _run_broadcast(bot: Bot, ctx: AppContext, admin_id: int, chat_id: int,
             await bot.send_message(admin_id, f"Xabar yuborish to'xtadi. Yuborilgan: {sent} ta.")
     finally:
         _broadcast_running = False
+
+
+@router.message(Command("websearch"))
+async def websearch_cmd(message: Message, command: CommandObject, ctx: AppContext) -> None:
+    value = _arg(command).lower()
+    s = ctx.settings
+    if value not in {"on", "off"}:
+        state = "yoqilgan" if s.web_search_enabled else "o'chirilgan"
+        await message.answer(
+            f"🌐 Internet qidiruvi: <b>{state}</b>\n\n"
+            "/websearch on — tahlil va kunlik g'oyalarda Google qidiruvidan foydalanish\n"
+            "/websearch off — o'chirish\n\n"
+            "<i>Gemini'da Google qidiruvi bepul tarifda kunlik cheklangan; billing yoqilgan bo'lsa, "
+            "limitdan oshgani pullik. Narxlarni Google AI Studio'da tekshiring.</i>"
+        )
+        return
+    provider = "none"
+    if value == "on":
+        provider = "gemini_search" if s.ai_provider == "gemini" else "openai_web"
+    await _set(
+        message,
+        ctx,
+        "research_provider",
+        provider,
+        "🌐 Internet qidiruvi yoqildi." if value == "on" else "Internet qidiruvi o'chirildi.",
+    )
+
+
+@router.message(Command("followup_days"))
+async def followup_days_cmd(message: Message, command: CommandObject, ctx: AppContext) -> None:
+    value = _arg(command)
+    if not value.isdigit() or int(value) > 90:
+        await message.answer("Masalan: /followup_days 7 (tahlildan 7 kun keyin so'rash) yoki 0 (o'chirish)")
+        return
+    await _set(
+        message,
+        ctx,
+        "followup_days",
+        value,
+        f"Kuzatuv: tahlildan {value} kun keyin." if int(value) else "Kuzatuv o'chirildi.",
+    )
+
+
+@router.message(Command("parsetest"))
+async def parsetest_cmd(message: Message, command: CommandObject, ctx: AppContext) -> None:
+    """Bank xabarini parser qanday tushunishini ko'rsatadi (hech narsa saqlanmaydi)."""
+    src = message.reply_to_message
+    text = (src.text or src.caption or "") if src else _arg(command)
+    if not text:
+        await message.answer(
+            "🧪 To'lov parserini tekshirish:\n\n"
+            "Bank xabarini (to'lov kanalidan forward qilib) shu chatga yuboring va unga "
+            "<b>javob (reply)</b> qilib /parsetest yozing. Yoki: /parsetest xabar matni"
+        )
+        return
+    parsed = parse_payment(text, ctx.settings.payment_amount_regex)
+    if parsed is None:
+        result = "❌ Summa topilmadi. Bu xabar to'lov sifatida qabul qilinmaydi."
+    elif not parsed.is_income:
+        result = (
+            f"⚠️ Summa: {format_money(parsed.amount)} so'm, lekin bu <b>chiqim</b> deb aniqlandi (e'tiborsiz)."
+        )
+    else:
+        result = (
+            f"✅ Kirim: <b>{format_money(parsed.amount)} so'm</b> — "
+            "shu summa kutilayotgan to'lov bilan solishtiriladi."
+        )
+    custom = "maxsus regex" if ctx.settings.payment_amount_regex else "standart qoidalar"
+    await message.answer(f"{result}\n\n<i>Ishlatilgan: {custom}.</i>")

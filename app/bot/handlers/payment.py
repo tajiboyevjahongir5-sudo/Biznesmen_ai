@@ -303,3 +303,13 @@ async def payment_channel_post(post: Message, ctx: AppContext, bot: Bot) -> None
             ctx,
             f"Mos kelmagan to'lov: <b>{format_money(amount)} so'm</b> (kech yoki noto'g'ri summa).{hint}",
         )
+
+
+async def restore_timers(bot: Bot, ctx: AppContext) -> int:
+    """Bot qayta ishga tushganda kutilayotgan to'lovlar taymerini qayta yoqadi."""
+    count = 0
+    for r in await ctx.payments.list_pending():
+        if r.message_id:
+            start_timer(bot, ctx, r.id, r.chat_id, r.message_id)
+            count += 1
+    return count

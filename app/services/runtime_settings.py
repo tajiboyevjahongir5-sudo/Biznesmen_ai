@@ -36,6 +36,8 @@ EDITABLE_KEYS: frozenset[str] = frozenset(
         "ideas_auto_publish",
         "payment_amount_regex",
         "subscription_days",
+        "research_provider",
+        "followup_days",
     }
 )
 
