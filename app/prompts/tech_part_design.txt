@@ -1,0 +1,73 @@
+HOZIRGI QISM: 3-qism — DIZAYN, ANIMATSIYA, QULAYLIK (bo'limlar 7–9). Hajmi: 7 000 – 12 000 belgi.
+"blueprint" dagi rollar, funksiyalar va oqimlarga aniq bog'lab yoz.
+
+## 7. UI/UX DIZAYN
+
+### 7.1 Dizayn yo'nalishi
+Uslub 3-4 so'z bilan (masalan: "toza, ishonchli, iliq") va nima uchun aynan shu
+auditoriyaga mos. Ilhom manbalari (dizayn tamoyillari, brend emas).
+
+### 7.2 Rang tokenlari
+Jadval (kamida 12 qator): token | yorug' mavzu HEX | qorong'i mavzu HEX | qayerda
+ishlatiladi. Albatta: primary, primary-pressed, secondary, accent, success, warning,
+error, background, surface, surface-elevated, border, text-primary, text-secondary,
+text-on-primary. Telegram Web App bo'lsa — qaysi token Telegram themeParams dan olinadi
+(bg_color, text_color, hint_color, button_color, button_text_color, secondary_bg_color)
+va qaysi biri o'zimizniki. Kontrast WCAG AA (4.5:1) ga mos.
+
+### 7.3 Tipografiya va o'lchamlar
+- Shrift (masalan Inter yoki tizim shrifti) va zaxira.
+- Tipografiya shkalasi jadvali: nom (display, h1, h2, body, caption...) | o'lcham px |
+  qator balandligi | qalinlik. Asosiy matn kamida 16px.
+- Oraliqlar (4/8px tizimi: 4, 8, 12, 16, 24, 32), burchak radiuslari, soyalar, ikonlar
+  (kutubxona va o'lcham) — dizayn tokenlari sifatida (CSS o'zgaruvchilari yoki Tailwind
+  config namunasi kod blokida).
+
+### 7.4 Komponentlar
+Kamida 10 ta komponent: har biri uchun vazifasi, o'lchami va holatlari (default, pressed,
+disabled, loading, error). Masalan: tugma (primary/secondary/ghost), kartochka, input,
+select/chip filtr, bottom sheet, modal, toast, tab bar, skeleton, empty state, rasm
+galereyasi, badge.
+
+### 7.5 Ekranlar
+Kamida 6 ta asosiy ekran (blueprint dagi oqimlarga mos). Har biri uchun: maqsadi,
+tarkibi yuqoridan pastga, asosiy harakat tugmasi (Telegram MainButton bo'lsa — matni),
+BackButton xatti-harakati, hamda 4 holat: yuklanish (skeleton), bo'sh (matn + harakat),
+xato (matn + "Qayta urinish"), muvaffaqiyat.
+
+### 7.6 Matnlar (microcopy)
+Kamida 12 ta tayyor o'zbekcha matn: tugma yozuvlari, bo'sh holatlar, xato xabarlari
+(nima bo'ldi + nima qilish kerak), tasdiqlash dialoglari, muvaffaqiyat xabarlari.
+Ohang: qisqa, do'stona, "siz" bilan. Kerak bo'lsa rus tili uchun i18n tuzilmasi.
+
+### 7.7 Mobil va accessibility
+Mobile-first, bosh barmoq zonasi (asosiy harakatlar pastda), tegish maydoni kamida
+44×44px, safe area, kichik ekran (360px) va katta ekran xatti-harakati, fokus
+holatlari, alt matnlar, rang yagona ma'lumot manbai bo'lmasin.
+
+## 8. ANIMATSIYA VA MIKRO-INTERAKSIYALAR
+- Harakat tokenlari jadvali (kamida 8 qator): nom | davomiylik ms | easing yoki spring
+  parametrlari | qayerda. Masalan: tugma bosilishi (scale 0.97, 100ms), sahifa o'tishi
+  (slide + fade, 250ms), bottom sheet (spring), ro'yxat elementlari (stagger 30ms),
+  skeleton shimmer, toast, muvaffaqiyat belgisi, sevimlilarga qo'shish.
+- Framer Motion (yoki tanlangan kutubxona) uchun 1-2 ta qisqa kod namunasi.
+- Haptic feedback jadvali: harakat | Telegram HapticFeedback metodi (impactOccurred
+  light/medium, notificationOccurred success/error, selectionChanged).
+- Qoidalar: faqat transform va opacity (60fps), animatsiya foydalanuvchini kutdirmasin
+  (300ms dan oshmasin), prefers-reduced-motion da o'chiriladi yoki soddalashadi.
+
+## 9. QULAYLIK VA TEZLIK
+- Asosiy vazifalar necha bosishda bajariladi (jadval: vazifa | bosishlar | maqsad ≤ 3).
+- Qidiruv, filtr va saralash: qaysi maydonlar, standart qiymatlar, filtrni eslab qolish,
+  natija soni ko'rsatilishi, "filtrlarni tozalash".
+- Formalar UX: qadamlarga bo'lish, avtomatik to'ldirish (Telegram ma'lumotlari),
+  real vaqtda validatsiya, qoralamani avtomatik saqlash, rasm yuklash progressi.
+- Ishlash byudjeti jadvali: ko'rsatkich | maqsad (masalan birinchi ekran < 2 s 4G da,
+  JS bundle < 200 KB gzip, API p95 < 300 ms, rasm < 150 KB, LCP < 2.5 s).
+- Tezlik usullari: kodni bo'lib yuklash (lazy routes), rasmlar WebP + o'lchamlar +
+  lazy-load, cursor pagination / infinite scroll, kesh (HTTP cache, TanStack Query,
+  Redis), optimistik yangilanish.
+- Sekin internet va oflayn holat: tushunarli xabar, qayta urinish, yuborilmagan
+  ma'lumotni saqlab qolish.
+
+QAYTARILADIGAN MAYDON: markdown — faqat 7–9 bo'limlar.

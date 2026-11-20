@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 from app.agents.analyst import AnalystAgent
 from app.agents.interviewer import InterviewerAgent
 from app.agents.prompt_engineer import PromptEngineerAgent, SuperPrompt
-from app.agents.tech_architect import TechArchitectAgent, TechPrompt
+from app.agents.tech_architect import TechArchitectAgent, TechBlueprint, TechPrompt, TechSection, assemble
 from app.bot.status import AnalysisProgress
 from app.core.orchestrator import Orchestrator
 from app.core.report import build_report_html
@@ -73,14 +73,77 @@ def test_report_includes_tech_prompt():
     assert "TEXNIK PROMPT" in html and "initData &lt;HMAC&gt;" in html
 
 
-async def test_tech_agent_passes_bigger_budget_and_timeout():
+PARTS = {
+    "tech_part_core": "QISM-CORE",
+    "tech_part_security": "QISM-SECURITY",
+    "tech_part_design": "QISM-DESIGN",
+    "tech_part_delivery": "QISM-DELIVERY",
+}
+CORE_MD = "## 1. ROL\nSenior dasturchi.\n\n## 5. ARXITEKTURA\nlistings jadvali.\n" + "c" * 2500
+
+
+def _part_reply(**kwargs):
+    instructions = kwargs["instructions"]
+    if "QISM-CORE" in instructions:
+        return TechBlueprint(title="Ijara boti — texnik", how_to_use="Cursor ga bering", markdown=CORE_MD)
+    name = next(v for v in PARTS.values() if v in instructions).split("-")[1]
+    return TechSection(markdown=f"## {name}\n" + "d" * 2000)
+
+
+async def test_tech_agent_writes_four_parts_on_top_of_blueprint():
     ai = MagicMock()
-    ai.structured = AsyncMock(return_value=TechPrompt(title="T", prompt=TECH_TEXT, how_to_use="Bering"))
-    agent = TechArchitectAgent(ai, prompt="tizim")
-    await agent.run(user_id=1, idea_data="g'oya", analysis_json="{}", product_type="Telegram Web App")
-    kw = ai.structured.call_args.kwargs
-    assert kw["schema"] is TechPrompt and kw["max_output_tokens"] > 8000 and kw["timeout"] >= 120
-    assert "Telegram Web App" in kw["user_input"]
+    ai.structured = AsyncMock(side_effect=lambda **kw: _part_reply(**kw))
+    agent = TechArchitectAgent(ai, prompt="tizim", parts=PARTS)
+    out = await agent.run(user_id=1, idea_data="g'oya", analysis_json="{}", product_type="Telegram Web App")
+
+    calls = [c.kwargs for c in ai.structured.call_args_list]
+    assert len(calls) == 4
+    assert calls[0]["schema"] is TechBlueprint and "<blueprint>" not in calls[0]["user_input"]
+    for kw in calls:
+        assert kw["max_output_tokens"] > 8000 and kw["timeout"] >= 120
+        assert "Telegram Web App" in kw["user_input"] and kw["instructions"].startswith("tizim")
+    for kw in calls[1:]:  # keyingi qismlar 1-qismga (blueprint) tayanadi
+        assert kw["schema"] is TechSection and "listings jadvali" in kw["user_input"]
+
+    assert out.title == "Ijara boti — texnik" and out.how_to_use == "Cursor ga bering"
+    assert out.prompt.startswith("## MUNDARIJA")
+    order = [out.prompt.index(h) for h in ("## 1. ROL", "## SECURITY", "## DESIGN", "## DELIVERY")]
+    assert order == sorted(order)
+
+
+async def test_tech_agent_fails_when_a_part_fails():
+    ai = MagicMock()
+
+    async def reply(**kw):
+        if "QISM-DESIGN" in kw["instructions"]:
+            raise AIServiceError("vaqt tugadi")
+        return _part_reply(**kw)
+
+    ai.structured = AsyncMock(side_effect=reply)
+    agent = TechArchitectAgent(ai, prompt="tizim", parts=PARTS)
+    try:
+        await agent.run(user_id=1, idea_data="g'oya", analysis_json="{}")
+    except AIServiceError:
+        pass
+    else:
+        raise AssertionError("xato kutilgandi")
+
+
+def test_assemble_adds_table_of_contents():
+    doc = assemble(["## 1. ROL\na", "## 6. XAVFSIZLIK\nb", "## 7. UI/UX\nc"])
+    assert doc.startswith("## MUNDARIJA\n- 1. ROL\n- 6. XAVFSIZLIK\n- 7. UI/UX")
+    assert assemble(["qisqa"]) == "qisqa"
+
+
+def test_real_prompt_files_load_for_every_part():
+    from app.agents.base import load_text
+    from app.agents.tech_architect import CORE_PART, DETAIL_PARTS
+
+    texts = [load_text(name) for name in (CORE_PART, *DETAIL_PARTS)]
+    joined = "\n".join(texts)
+    for section in range(1, 16):
+        assert f"## {section}. " in joined  # 15 bo'limning hammasi qaysidir qismda bor
+    assert "HMAC" in texts[1] and "HEX" in texts[2] and "ISH REJASI" in texts[3]
 
 
 async def test_gemini_call_uses_agent_timeout_and_token_budget(settings):
@@ -209,3 +272,27 @@ async def test_progress_inserts_tech_stage_before_report():
     await progress.stage("report")
     await progress.finish(ok=True)
     assert "✅ TEXNIK PROMPT" in bot.edit_message_text.call_args.args[0]
+
+
+async def test_project_gets_short_name_after_analysis(session_factory):
+    sp = SOFTWARE.model_copy(update={"project_name": "  Xorazm   maklersiz uy-joy boti "})
+    user_id, project_id, out = await _run(_orchestrator(session_factory, sp, None), session_factory)
+    async with session_factory() as s:
+        project = await repo.get_project(s, user_id, project_id)
+    assert project.title == "Xorazm maklersiz uy-joy boti"
+    assert "<h1>Xorazm maklersiz uy-joy boti</h1>" in out.report_html
+
+
+def test_report_clips_long_title():
+    html = build_report_html(
+        project_id=1,
+        title="Uzun xulosa jumlasi " * 20,
+        analysis=_analysis(),
+        sources=[],
+        web_used=False,
+        finance=None,
+        prompt_title="Bot",
+        prompt_text="Biznes prompt",
+    )
+    h1 = html.split("<h1>")[1].split("</h1>")[0]
+    assert len(h1) <= 120 and h1.endswith("…")

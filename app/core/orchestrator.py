@@ -281,6 +281,9 @@ class Orchestrator:
                 session, project_id, super_prompt.prompt, tech.prompt if tech is not None else None
             )
             project.status = ProjectStatus.DONE
+            name = " ".join(super_prompt.project_name.split())
+            if name:
+                project.title = name[:200]  # suhbat xulosasi o'rniga qisqa nom (tarix va hisobotda)
             days = self._followup_days()
             project.followup_at = datetime.now(UTC) + timedelta(days=days) if days > 0 else None
             title = project.title or idea[:80]

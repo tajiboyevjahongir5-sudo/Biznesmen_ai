@@ -13,8 +13,13 @@ AGENT_NAME = "prompt_engineer"
 
 class SuperPrompt(BaseModel):
     title: str = Field(max_length=200)
-    prompt: str = Field(min_length=200, max_length=20000)
+    prompt: str = Field(min_length=200, max_length=30000)
     how_to_use: str = Field(max_length=600)
+    project_name: str = Field(
+        default="",
+        max_length=80,
+        description="Loyihaning qisqa nomi, 2-6 so'z (masalan: 'Xorazm maklersiz uy-joy boti').",
+    )
     software_product: bool = Field(
         default=False,
         description="true — mahsulotning o'zi dastur bo'lsa: Telegram bot, Web App, mobil ilova, "

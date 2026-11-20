@@ -119,6 +119,9 @@ def build_report_html(
     tech_prompt_text: str = "",
 ) -> str:
     a = analysis
+    title = " ".join(title.split())
+    if len(title) > 120:
+        title = title[:119].rstrip(" ,.;:") + "…"
     tech = (
         "<section><h2>🛠 TEXNIK PROMPT (dasturchi AI uchun)</h2>\n"
         "<p class='muted'>Kod tuzilishi, xavfsizlik, UI/UX dizayn, animatsiya va deploy bo'yicha "

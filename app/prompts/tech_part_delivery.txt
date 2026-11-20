@@ -1,0 +1,60 @@
+HOZIRGI QISM: 4-qism — ADMIN, SIFAT, DEPLOY VA ISH REJASI (bo'limlar 10–15).
+Hajmi: 6 000 – 10 000 belgi. "blueprint" dagi stek, jadvallar va funksiyalarga aniq bog'lab yoz.
+
+## 10. ADMIN PANEL, MODERATSIYA VA ANALITIKA
+- Admin imkoniyatlari ro'yxati (kamida 8 ta): moderatsiya navbati, tasdiqlash/rad etish
+  (sabab tanlash bilan), foydalanuvchini bloklash, shikoyatlar, statistika, sozlamalar,
+  e'lon yoki kontentni tahrirlash, audit log. Qayerda ishlaydi (bot ichida / alohida veb).
+- Moderatsiya jarayoni qadamlab va SLA (masalan 2 soat ichida ko'rib chiqish).
+- Analitika hodisalari jadvali (kamida 10 qator): hodisa nomi | qachon | xususiyatlari.
+- Biznes KPI lar va ularni hisoblash formulasi (konversiya, retention D1/D7/D30, faol
+  foydalanuvchilar, e'lon/buyurtma soni).
+
+## 11. SIFAT VA TESTLAR
+- Test piramidasi: unit / integratsion / e2e — har birida nima va qaysi vosita bilan.
+- Aniq test holatlari ro'yxati (kamida 15 ta), masalan: noto'g'ri initData rad etiladi,
+  eskirgan auth_date rad etiladi, boshqa foydalanuvchining e'lonini o'zgartirib bo'lmaydi,
+  limitdan oshganda 429, katta fayl rad etiladi, filtr to'g'ri ishlaydi, pagination...
+- Kod sifati: linter, formatter, tip tekshiruvi, pre-commit; test qamrovi maqsadi
+  (masalan muhim modullarda 80%).
+- CI (GitHub Actions) bosqichlari: install → lint → typecheck → test → build → audit.
+- Kod review tekshiruv ro'yxati (kamida 8 band).
+
+## 12. DEPLOY VA MONITORING
+- Muhitlar: dev / staging / prod — farqlari.
+- docker-compose xizmatlari ro'yxati (bot, api, frontend yoki static, db, redis, ...)
+  va qisqa docker-compose skeleti (kod blokida, maxfiy qiymatlarsiz).
+- Migratsiyalar strategiyasi, webhook yoki polling sozlash, Web App URL (HTTPS) va
+  BotFather sozlamalari.
+- Zaxira nusxa: nima, qanchalik tez-tez, qayerga, tiklash testi.
+- Monitoring va ogohlantirishlar jadvali: nima kuzatiladi | vosita (Sentry, uptime,
+  loglar) | qachon ogohlantiradi.
+- Taxminiy oylik xarajat jadvali so'mda (server, baza, fayl saqlash, domen, boshqa) —
+  "taxmin" deb belgila.
+
+## 13. ISH REJASI (BOSQICHLAR)
+8-10 ta bosqich (0-bosqichdan). Har biri uchun: maqsad | vazifalar | natija (ishlaydigan,
+ko'rsatsa bo'ladigan narsa) | testlar | taxminiy kun. Tartib: sozlash → ma'lumotlar
+modeli → auth → asosiy API → bot → frontend asosi → asosiy ekranlar → admin/moderatsiya
+→ xavfsizlik va tezlik → deploy. AI har bosqich oxirida qisqa hisobot beradi va
+keyingisiga o'tishdan oldin foydalanuvchidan tasdiq so'raydi.
+
+## 14. AI UCHUN ISHLASH QOIDALARI
+Kamida 10 ta qoida, jumladan:
+- Avval yetishmayotgan muhim ma'lumotlarni (3-7 ta savol) so'ra, keyin boshlash.
+- Har doim to'liq, ishlaydigan fayllar yoz; "... qolgani shu yerda" kabi qisqartirma.
+- Mavjud bo'lmagan API yoki kutubxona funksiyasini o'ylab topma; ishonchsiz bo'lsang ayt.
+- Maxfiy kalitlarni kodga yozma; foydalanuvchidan chatda token so'rama — .env ga o'zi kiritadi.
+- Har o'zgarishdan keyin testlarni ishga tushir va natijani halol ayt.
+- Bog'liqlik qo'shishdan oldin nima uchun kerakligini tushuntir.
+- Xavfsizlik va shaxsiy ma'lumotlar talablarini hech qachon soddalashtirma.
+- Dizayn tokenlari va komponentlardan chetga chiqma.
+
+## 15. TAYYORLIK MEZONLARI (Definition of Done)
+Kamida 12 ta "[ ]" belgili, tekshirsa bo'ladigan mezon: funksiyalar qabul mezonlariga
+mos, barcha testlar o'tadi, xavfsizlik tekshiruv ro'yxati bajarilgan, ishlash byudjeti
+bajarilgan, yorug'/qorong'i mavzu, 360px ekranda qulay, barcha ekran holatlari bor,
+xatolar tushunarli, monitoring ulangan, zaxira nusxa sinalgan, README va .env.example
+bor va h.k.
+
+QAYTARILADIGAN MAYDON: markdown — faqat 10–15 bo'limlar.

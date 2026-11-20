@@ -149,9 +149,12 @@ yoritadi. Agar g'oyaning o'zi dastur bo'lsa (Telegram bot, Web App, mobil ilova,
 yozadi: funksiyalar va user story lar, texnologiyalar, papka tuzilishi, ma'lumotlar modeli, API,
 xavfsizlik (initData HMAC tekshiruvi, rollar, IDOR/XSS/SQLi, rate limit, fayl yuklash, maxfiy
 kalitlar), UI/UX dizayn tizimi (ranglar, tipografiya, komponentlar, ekran holatlari), animatsiya,
-qulaylik va tezlik, admin panel, testlar, deploy va bosqichma-bosqich ish rejasi. Bu tahlilga
-bitta qo'shimcha AI so'rovi qo'shadi (o'z chegarasi: 16 000 token, 180 soniya); xato bo'lsa
-asosiy tahlil baribir yuboriladi. O'chirish: `/tech_prompt off` yoki `TECH_PROMPT=false`.
+qulaylik va tezlik, admin panel, testlar, deploy va bosqichma-bosqich ish rejasi. Bitta katta
+javobda model bo'limlarni qisqartirib yuborgani uchun hujjat 4 qismda yoziladi: avval asos
+(mahsulot, stek, arxitektura), keyin unga tayangan holda xavfsizlik, dizayn va yetkazib berish
+qismlari parallel — har qismda "kamida N ta" talablari bor. Bu tahlilga 4 ta qo'shimcha AI
+so'rovi qo'shadi (har biri: 16 000 token, 180 soniya); xato bo'lsa asosiy tahlil baribir
+yuboriladi. O'chirish: `/tech_prompt off` yoki `TECH_PROMPT=false`.
 `/prompt raqam` ikkala promptni ham qayta yuboradi.
 
 Ovozli xabarlar ham tushuniladi (Gemini matnga aylantiradi, so'ng oddiy suhbat davom etadi).

@@ -22,3 +22,9 @@ UMUMIY XAVFSIZLIK QOIDALARI
 @lru_cache(maxsize=32)
 def load_prompt(name: str) -> str:
     return (PROMPTS_DIR / f"{name}.txt").read_text(encoding="utf-8") + "\n" + SAFETY_FOOTER
+
+
+@lru_cache(maxsize=32)
+def load_text(name: str) -> str:
+    """Prompt faylini o'zgarishsiz o'qiydi (qism ko'rsatmalari uchun — umumiy qoidalarsiz)."""
+    return (PROMPTS_DIR / f"{name}.txt").read_text(encoding="utf-8")

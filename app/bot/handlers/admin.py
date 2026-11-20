@@ -463,7 +463,7 @@ async def tech_prompt_cmd(message: Message, command: CommandObject, ctx: AppCont
             f"🛠 <b>TEXNIK PROMPT</b>: {state}\n\n"
             "G'oya dasturiy mahsulot (bot, ilova, sayt, platforma) bo'lsa, SUPER PROMPT dan "
             "tashqari dasturchi AI uchun kod, xavfsizlik, UI/UX, animatsiya va deploy bo'yicha "
-            "alohida prompt yoziladi. Har tahlilga bitta qo'shimcha AI so'rovi ketadi.\n\n"
+            "alohida prompt yoziladi. Har shunday tahlilga 4 ta qo'shimcha AI so'rovi ketadi.\n\n"
             "ℹ️ Masalan: /tech_prompt on yoki /tech_prompt off"
         )
         return

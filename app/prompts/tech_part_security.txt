@@ -1,0 +1,66 @@
+HOZIRGI QISM: 2-qism — XAVFSIZLIK (bo'lim 6). Hajmi: 6 000 – 10 000 belgi.
+"blueprint" dagi stek, jadvallar, endpointlar va rollarga aniq bog'lab yoz.
+
+## 6. XAVFSIZLIK
+
+### 6.1 Tahdidlar modeli
+Jadval (kamida 12 qator): tahdid | qayerda (endpoint, oqim, komponent) | ta'siri |
+himoya chorasi. Albatta: soxta initData / sessiya o'g'irlash, IDOR, SQL injection, XSS,
+CSRF (cookie bo'lsa), brute force va spam, fayl yuklash orqali hujum, maxfiy kalit sizishi,
+shaxsiy ma'lumot sizishi, DoS / ko'p so'rov, to'lov soxtalashtirish (bo'lsa), admin
+panelga kirish, bog'liqliklardagi zaifliklar.
+
+### 6.2 Autentifikatsiya
+- Telegram Web App bo'lsa: initData ni serverda tekshirish qadamlab — secret_key =
+  HMAC_SHA256(key="WebAppData", msg=bot_token); data_check_string (hash dan tashqari
+  maydonlar, kalit bo'yicha saralangan, "\n" bilan); hash ni constant-time solishtirish;
+  auth_date eskirganligi (masalan 24 soatdan eski bo'lsa rad etish). Tanlangan backend
+  tilida 15-30 qatorli namunaviy funksiya (kod blokida).
+- Sessiya: initData tekshirilgach qisqa muddatli token (masalan 15 daqiqa) yoki har
+  so'rovda initData sarlavhasi — qaysi biri va nima uchun.
+- Boshqa platformalarda: xavfsiz login (OTP yoki OAuth), parollar bo'lsa argon2/bcrypt.
+
+### 6.3 Avtorizatsiya
+- Ruxsatlar matritsasi jadvali: harakat | har bir rol (✅ / ❌ / "faqat o'ziniki").
+- IDOR ga qarshi: har bir o'zgartirish so'rovida resurs egasini serverda tekshirish
+  (qaysi endpointlarda) — kod darajasida qoida.
+- Admin funksiyalari: alohida tekshiruv, adminlar ro'yxati .env da, harakatlar audit logda.
+
+### 6.4 Kiruvchi ma'lumotlar validatsiyasi
+Jadval (kamida 10 qator): maydon | tur | cheklov (uzunlik, diapazon, regex, ruxsat
+etilgan qiymatlar) | xato matni (o'zbekcha). Telefon raqami formati (+998...), narx
+diapazoni, matnlarda HTML ni tozalash yoki escape qilish.
+
+### 6.5 Spam, rate limiting va suiiste'mol
+- Limitlar jadvali: endpoint yoki harakat | limit (masalan 5 ta / soat) | kalit
+  (user_id / IP) | oshsa nima bo'ladi.
+- Mahsulotga xos suiiste'mol ssenariylari (kamida 5 ta, masalan soxta e'lonlar,
+  vositachilar, firibgarlik, bir nechta akkaunt, takroriy e'lonlar) va har biriga
+  aniq qarshi chora (moderatsiya, shikoyat tugmasi, takrorni aniqlash, bloklash).
+
+### 6.6 Fayllar
+Ruxsat etilgan turlar va hajm (masalan JPEG/PNG/WebP, 5 MB gacha, 10 ta rasm), MIME va
+magic bytes tekshiruvi, EXIF/GPS metama'lumotini o'chirish, WebP ga qayta kodlash,
+tasodifiy fayl nomi (UUID), alohida bucket, ijro etilmaydigan saqlash, imzolangan URL.
+
+### 6.7 Maxfiy kalitlar, loglar va shaxsiy ma'lumotlar
+- Kalitlar faqat muhit o'zgaruvchilarida; .env gitga tushmaydi (.gitignore); kalitlarni
+  almashtirish (rotation) tartibi.
+- Loglarda token, initData, telefon raqami chiqmasin — maskalash namunasi.
+- Shaxsiy ma'lumotlar: qaysilari yig'iladi va nima uchun (minimal), saqlash muddati,
+  o'chirish so'rovi, maxfiylik siyosati; O'zbekiston "Shaxsga doir ma'lumotlar
+  to'g'risida"gi qonuni va ma'lumotlarni mahalliy saqlash talabi
+  [huquqshunos bilan tekshirish kerak].
+
+### 6.8 Transport, infratuzilma va to'lovlar
+- HTTPS, HSTS, CSP (namunaviy qiymat), X-Content-Type-Options, CORS (faqat kerakli origin).
+- Baza: parametrlangan so'rovlar/ORM, minimal huquqli DB foydalanuvchi, zaxira nusxa va
+  tiklash testi.
+- To'lov bo'lsa: faqat provayder orqali, webhook imzosini tekshirish, idempotentlik
+  kaliti, summani serverda hisoblash, karta ma'lumoti saqlanmaydi.
+- Bog'liqliklar: pip-audit / npm audit, Dependabot, bandit.
+
+### 6.9 Xavfsizlik tekshiruv ro'yxati
+Kamida 12 ta "[ ]" belgili band — relizdan oldin tekshiriladi.
+
+QAYTARILADIGAN MAYDON: markdown — faqat 6-bo'lim.

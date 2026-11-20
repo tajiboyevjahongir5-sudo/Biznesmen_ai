@@ -1,0 +1,58 @@
+HOZIRGI QISM: 1-qism — MAHSULOT VA ARXITEKTURA (bo'limlar 1–5). Hajmi: 7 000 – 12 000 belgi.
+
+## 1. ROL
+- AI qaysi rollarda ishlaydi (kamida 4 ta): Senior full-stack dasturchi, xavfsizlik
+  muhandisi, UI/UX dizayner, QA muhandisi — har birining mas'uliyati bir jumlada.
+- Ishlash uslubi: avval reja, keyin kod; har bosqich oxirida test va qisqa hisobot.
+
+## 2. MAHSULOT HAQIDA
+- 2-3 jumlada: mahsulot nima, kim uchun, qaysi muammoni hal qiladi, raqobatchilardan farqi.
+- Rollar jadvali: rol | kim | asosiy maqsadi | nimalarga ruxsati bor.
+- MVP chegarasi: "MVP da BOR" (kamida 6 ta funksiya) va "KEYINGI VERSIYALARDA"
+  (kamida 5 ta) ro'yxatlari.
+- Taxminlar va aniqlanmagan joylar ro'yxati (har biriga taklif qilingan standart yechim).
+
+## 3. FUNKSIYALAR VA FOYDALANUVCHI OQIMLARI
+- Har bir rol uchun kamida 3 ta user story: "Men [rol] sifatida [harakat] qilmoqchiman,
+  chunki [maqsad]".
+- MVP ning har bir asosiy funksiyasi uchun kamida 3 ta qabul mezoni (Given / When / Then)
+  — tekshirsa bo'ladigan aniq shartlar (raqamlar, limitlar, holatlar).
+- Kamida 4 ta asosiy oqim qadamlab (1 → 2 → 3...): kirish/ro'yxatdan o'tish, asosiy harakat
+  (masalan e'lon qo'shish, buyurtma, bron), qidiruv/ko'rish, bekor qilish yoki tahrirlash.
+  Har oqimda xato tarmoqlari: tarmoq uzilsa, validatsiya xatosi, ruxsat yo'q bo'lsa.
+- Obyekt holatlari (state machine): masalan e'lon: draft → pending → active → expired/rejected
+  — qaysi hodisa qaysi holatga o'tkazadi va kim o'tkazadi.
+- Bildirishnomalar jadvali: hodisa | kimga | kanal (bot xabari, push) | matn namunasi.
+
+## 4. TEXNOLOGIYALAR
+- Jadval: qatlam | texnologiya | versiya | nima uchun aynan shu (kamida 8 qator):
+  bot, frontend, UI kutubxona, holat boshqaruvi, backend, ORM/migratsiya, baza, kesh/navbat,
+  fayl saqlash, test, CI, hosting.
+- Mahsulotga mos va oddiy stek tanla. Telegram Web App bo'lsa: Telegram WebApp SDK,
+  React + Vite + TypeScript, Tailwind CSS, Framer Motion; backend FastAPI yoki NestJS;
+  PostgreSQL; Redis. To'lov bo'lsa — Click / Payme / Uzum rasmiy API.
+- Rad etilgan alternativalar va sababi (2-3 ta).
+
+## 5. ARXITEKTURA VA KOD TUZILISHI
+- Matnli komponentlar diagrammasi (kod blokida): foydalanuvchi → Telegram → bot / Web App →
+  API → baza / kesh / fayl saqlash / tashqi xizmatlar.
+- To'liq papka tuzilishi (kod blokida, daraxt ko'rinishida, fayl darajasigacha, kamida 25 qator):
+  bot, backend (routes, services, repositories, models, schemas, core/security), frontend
+  (pages, components, hooks, api, store, styles/tokens), migrations, tests, docker, .github.
+- Ma'lumotlar modeli: HAR BIR jadval alohida Markdown jadval: maydon | tur | majburiy |
+  izoh (cheklov, default). Kamida 5 ta jadval (mahsulotga qarab). Har biri uchun indekslar,
+  unique cheklovlar, FK va ON DELETE qoidasi, enum qiymatlari, created_at/updated_at,
+  soft delete kerakmi.
+- API endpointlar jadvali (kamida 12 qator): metod | yo'l | kim chaqira oladi | kirish
+  (asosiy maydonlar) | javob | xato kodlari. Pagination (cursor yoki limit/offset),
+  filtrlash va saralash parametrlari.
+- Yagona xato formati (JSON namunasi kod blokida) va HTTP status kodlari qoidasi.
+- Fon vazifalari jadvali: vazifa | qachon (cron/hodisa) | nima qiladi | qayta urinish.
+- Muhit o'zgaruvchilari: faqat NOMLARI va vazifasi (qiymatsiz) — .env.example uchun.
+- Kod standartlari: typing (TypeScript strict / mypy), linter va formatter, nomlash,
+  qatlamlar orasidagi qoidalar (handler → service → repository), loglash formati.
+
+QAYTARILADIGAN MAYDONLAR:
+- title — hujjatning qisqa nomi (masalan: "Xorazm uy-joy boti — texnik topshiriq").
+- how_to_use — 2-4 jumlada: hujjatni qaysi vositaga qanday berish va birinchi qadam.
+- markdown — yuqoridagi 1–5 bo'limlar.
