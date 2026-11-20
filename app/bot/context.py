@@ -13,6 +13,7 @@ from app.services.ai_service import AIService
 from app.services.channel_service import ChannelService
 from app.services.payment_service import PaymentService
 from app.services.runtime_settings import RuntimeSettings
+from app.services.subscription_service import SubscriptionService
 
 
 @dataclass
@@ -26,4 +27,5 @@ class AppContext:
     rate_limiter: RateLimiter
     user_locks: UserLocks
     runtime: RuntimeSettings
+    subscriptions: SubscriptionService
     bot_username: str = ""

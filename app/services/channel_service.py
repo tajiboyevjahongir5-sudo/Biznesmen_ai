@@ -105,7 +105,7 @@ class ChannelService:
                 inline_keyboard=[
                     [
                         InlineKeyboardButton(
-                            text="SUPER PROMPT ni olish", url=idea_deep_link(bot_username, idea.id)
+                            text="🤖 SUPER PROMPT ni olish", url=idea_deep_link(bot_username, idea.id)
                         )
                     ]
                 ]

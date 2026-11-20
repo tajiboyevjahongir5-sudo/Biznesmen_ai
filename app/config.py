@@ -121,6 +121,8 @@ class Settings(BaseSettings):
     payment_card_number: str = Field(default="", alias="PAYMENT_CARD_NUMBER")
     payment_card_holder: str = Field(default="", alias="PAYMENT_CARD_HOLDER")
     payment_timeout_seconds: int = Field(default=300, ge=60, le=3600, alias="PAYMENT_TIMEOUT_SECONDS")
+    # Obuna muddati (kun). 0 — bir martalik to'lov, umrbod kirish.
+    subscription_days: int = Field(default=0, ge=0, le=3650, alias="SUBSCRIPTION_DAYS")
     invite_link_ttl_hours: int = Field(default=24, ge=1, le=720, alias="INVITE_LINK_TTL_HOURS")
     # Ixtiyoriy: bank xabaridan summani ajratib oluvchi o'z regex ifodangiz (bitta guruh).
     payment_amount_regex: str = Field(default="", alias="PAYMENT_AMOUNT_REGEX")

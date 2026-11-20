@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from html import escape
 
 from app.agents.analyst import MarketAnalysis
@@ -17,6 +18,15 @@ KIND_LABEL = {"fakt": "Fakt", "taxmin": "Taxmin", "prognoz": "Prognoz"}
 def e(text: str) -> str:
     """AI yoki foydalanuvchi matnini HTML uchun xavfsiz qiladi."""
     return escape(text or "", quote=False)
+
+
+_BOLD_RE = re.compile(r"\*\*([^\n*]{1,200}?)\*\*")
+
+
+def format_reply(text: str) -> str:
+    """AI suhbat javobini xavfsiz HTML ga aylantiradi: faqat **qalin** ruxsat etiladi."""
+    safe = _BOLD_RE.sub(r"<b>\1</b>", e(text.strip()))
+    return safe.replace("**", "")
 
 
 def split_message(text: str, limit: int = SAFE_LIMIT) -> list[str]:
@@ -146,23 +156,23 @@ def render_prompt(title: str, prompt: str, how_to_use: str) -> list[str]:
 
 def render_channel_post(idea: ScoutIdea, web_used: bool) -> str:
     lines = [
-        f"<b>{e(idea.title)}</b>",
+        f"💡 <b>{e(idea.title)}</b>",
         "",
-        e(idea.one_liner),
+        f"<i>{e(idea.one_liner)}</i>",
         "",
-        f"<b>Talab:</b> {e(idea.demand_level)}   <b>Raqobat:</b> {e(idea.competition_level)}",
-        f"<b>Kim uchun:</b> {e(idea.target_customers)}",
+        f"📈 Talab: <b>{e(idea.demand_level)}</b>   ⚔️ Raqobat: <b>{e(idea.competition_level)}</b>",
+        f"🎯 <b>Kim uchun:</b> {e(idea.target_customers)}",
         "",
-        f"<b>Nega talab bor:</b> {e(idea.why_demand_high)}",
+        f"🔥 <b>Nega talab bor:</b> {e(idea.why_demand_high)}",
         "",
-        f"<b>Nega raqobat kam:</b> {e(idea.why_competition_low)}",
+        f"🛡 <b>Nega raqobat kam:</b> {e(idea.why_competition_low)}",
         "",
-        f"<b>Boshlang'ich xarajat (taxmin):</b> {e(idea.startup_cost_estimate)}",
+        f"💰 <b>Boshlang'ich xarajat (taxmin):</b> {e(idea.startup_cost_estimate)}",
     ]
     if idea.risks:
-        lines += ["", "<b>Xavflar:</b>"] + [f"• {e(r)}" for r in idea.risks[:4]]
+        lines += ["", "⚠️ <b>Xavflar:</b>"] + [f"• {e(r)}" for r in idea.risks[:4]]
     if not web_used:
         lines += ["", "<i>Internet ma'lumotisiz tayyorlangan, raqamlar taxminiy.</i>"]
-    lines += ["", "To'liq SUPER PROMPT ni olish uchun pastdagi tugmani bosing."]
+    lines += ["", "👇 To'liq SUPER PROMPT ni olish uchun pastdagi tugmani bosing."]
     text = "\n".join(lines)
     return text[: TELEGRAM_LIMIT - 100]

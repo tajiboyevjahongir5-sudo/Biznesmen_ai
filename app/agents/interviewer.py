@@ -52,12 +52,17 @@ def format_conversation(turns: list[Turn]) -> str:
     return "\n\n".join(f"{names[t.role]}: {t.text}" for t in turns)
 
 
-def build_input(idea: str, turns: list[Turn], questions_asked: int, min_q: int, max_q: int) -> str:
+def build_input(
+    idea: str, turns: list[Turn], questions_asked: int, min_q: int, max_q: int, user_name: str = ""
+) -> str:
     """Agentga yuboriladigan qism: barcha foydalanuvchi matnlari ishonchsiz blok ichida."""
     parts = [wrap_untrusted(idea, "user_idea")]
     if turns:
         parts.append(wrap_untrusted(format_conversation(turns), "conversation"))
-    rule = f"Hozirgacha berilgan savollar: {questions_asked}. "
+    if user_name:
+        parts.append(wrap_untrusted(user_name[:40], "user_name"))
+    left = max(0, max_q - questions_asked)
+    rule = f"Hozirgacha berilgan savollar: {questions_asked} (ko'pi bilan yana {left} ta). "
     if questions_asked < min_q:
         rule += f"Kamida {min_q} ta savol berilmaguncha ready_for_analysis=false bo'lsin."
     elif questions_asked >= max_q:
@@ -82,14 +87,16 @@ class InterviewerAgent:
         questions_asked: int,
         min_questions: int,
         max_questions: int,
+        user_name: str = "",
     ) -> InterviewStep:
         step = await self._ai.structured(
             user_id=user_id,
             agent=AGENT_NAME,
             instructions=self._prompt,
-            user_input=build_input(idea, turns, questions_asked, min_questions, max_questions),
+            user_input=build_input(idea, turns, questions_asked, min_questions, max_questions, user_name),
             schema=InterviewStep,
-            max_output_tokens=1200,
+            # Gemini "o'ylash" tokenlari ham shu limitga kiradi — kichik limit JSON ni kesib qo'yadi.
+            max_output_tokens=4000,
         )
         # Limitlarni kod darajasida ham majburlaymiz (AI ga to'liq ishonmaymiz).
         if questions_asked >= max_questions and step.intent == "has_idea":

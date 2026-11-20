@@ -31,7 +31,8 @@ from app.services.ai_service import AIService
 from app.services.channel_service import ChannelService
 from app.services.payment_service import PaymentService
 from app.services.runtime_settings import RuntimeSettings
-from app.services.scheduler import daily_research_loop, payment_sweeper_loop
+from app.services.scheduler import daily_research_loop, payment_sweeper_loop, subscription_loop
+from app.services.subscription_service import SubscriptionService
 
 logger = logging.getLogger("app")
 
@@ -40,6 +41,7 @@ USER_COMMANDS = [
     BotCommand(command="new", description="Yangi biznes g'oya"),
     BotCommand(command="history", description="Mening loyihalarim"),
     BotCommand(command="kanal", description="G'oyalar kanali"),
+    BotCommand(command="report", description="Loyiha hisobotini fayl qilib olish"),
     BotCommand(command="cancel", description="Joriy suhbatni to'xtatish"),
     BotCommand(command="help", description="Yordam"),
 ]
@@ -67,6 +69,7 @@ def build_context(settings: Settings, session_factory, runtime: RuntimeSettings)
         rate_limiter=RateLimiter(settings.rate_limit_messages, settings.rate_limit_window_seconds),
         user_locks=UserLocks(),
         runtime=runtime,
+        subscriptions=SubscriptionService(session_factory),
     )
 
 
@@ -119,6 +122,7 @@ async def run() -> None:
     tasks = [
         asyncio.create_task(daily_research_loop(bot, ctx)),
         asyncio.create_task(payment_sweeper_loop(ctx)),
+        asyncio.create_task(subscription_loop(bot, ctx)),
     ]
     logger.info("Bot ishga tushdi: @%s", ctx.bot_username)
     try:

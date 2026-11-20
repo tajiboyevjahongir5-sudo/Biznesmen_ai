@@ -52,18 +52,29 @@ async def is_channel_member(bot: Bot, ctx: AppContext, telegram_id: int) -> bool
 def promo_text(ctx: AppContext) -> str:
     s = ctx.settings
     return (
-        f"<b>{e(s.ideas_channel_title)}</b>\n\n"
+        f"🚀 <b>{e(s.ideas_channel_title)}</b>\n\n"
         "Har kuni bozorni o'rganib, <b>talabi yuqori va raqobati past</b> biznes g'oyalarni "
-        "joylab boraman. Har bir g'oya ostidagi tugma orqali o'sha g'oya uchun to'liq "
-        "SUPER PROMPT olasiz: bozor, xavflar, moliyaviy reja va harakat rejasi bilan.\n\n"
-        f"Kanalga kirish narxi: <b>{format_money(s.channel_price_uzs)} so'm</b> (bir martalik).\n\n"
+        "joylab boraman.\n\n"
+        "💡 Har kuni yangi, tekshirilgan g'oyalar\n"
+        "📊 Talab, raqobat va xavflar tahlili\n"
+        "🤖 Har bir g'oya ostidagi tugma orqali — tayyor SUPER PROMPT\n\n"
+        f"💳 Kanalga kirish: <b>{format_money(s.channel_price_uzs)} so'm</b> "
+        f"{access_period(s.subscription_days)}.\n\n"
         "<i>Eslatma: g'oyalar tahlil va maslahat xarakterida, daromad kafolatlanmaydi.</i>"
     )
 
 
+def access_period(days: int) -> str:
+    if days <= 0:
+        return "(bir martalik, umrbod kirish)"
+    if days % 30 == 0:
+        return f"({days // 30} oy uchun)"
+    return f"({days} kun uchun)"
+
+
 def promo_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text="To'lov qilish", callback_data=CB_PAY_START)]]
+        inline_keyboard=[[InlineKeyboardButton(text="💳 To'lov qilish", callback_data=CB_PAY_START)]]
     )
 
 
@@ -88,4 +99,23 @@ async def maybe_send_promo(
         user.promo_sent_at = now
         await session.commit()
     await bot.send_message(chat_id, promo_text(ctx), reply_markup=promo_kb())
+    return True
+
+
+ALERT_COOLDOWN = timedelta(minutes=15)
+_last_alert: dict[str, datetime] = {}
+
+
+async def alert_admins(bot: Bot, ctx: AppContext, key: str, text: str, force: bool = False) -> bool:
+    """Adminlarga texnik ogohlantirish. Bir xil `key` 15 daqiqada ko'pi bilan bir marta yuboriladi."""
+    now = datetime.now(UTC)
+    last = _last_alert.get(key)
+    if not force and last and now - last < ALERT_COOLDOWN:
+        return False
+    _last_alert[key] = now
+    for admin_id in ctx.settings.admin_ids:
+        try:
+            await bot.send_message(admin_id, text)
+        except TelegramAPIError:
+            logger.warning("admin_alert_failed")
     return True

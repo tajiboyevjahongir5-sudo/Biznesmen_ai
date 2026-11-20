@@ -197,8 +197,9 @@ async def test_orchestrator_full_flow(session_factory):
     r2 = await orch.handle_user_text(telegram_id=555, user_db_id=user.id, text="Toshkentda")
     assert r2.run_analysis and r2.project_id == r1.project_id
 
-    parts = await orch.run_analysis(telegram_id=555, user_db_id=user.id, project_id=r2.project_id)
-    assert any("SUPER PROMPT" in p for p in parts)
+    out = await orch.run_analysis(telegram_id=555, user_db_id=user.id, project_id=r2.project_id)
+    assert any("SUPER PROMPT" in p for p in out.parts)
+    assert out.report_html.startswith("<!DOCTYPE html>") and "P" * 300 in out.report_html
 
     async with session_factory() as s:
         project = await s.get(BusinessProject, r1.project_id)

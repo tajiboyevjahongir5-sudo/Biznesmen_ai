@@ -36,5 +36,5 @@ class PromptEngineerAgent:
             instructions=self._prompt,
             user_input=user_input,
             schema=SuperPrompt,
-            max_output_tokens=5000,
+            max_output_tokens=8000,
         )

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from typing import Any
 
 from aiogram import BaseMiddleware
@@ -46,6 +47,7 @@ class UserContextMiddleware(BaseMiddleware):
                 (tg_user.username or "")[:64] or None,
                 (tg_user.first_name or "")[:128] or None,
             )
+            await repo.touch_user(session, user, datetime.now(UTC))
             await session.commit()
             blocked, db_id = user.is_blocked, user.id
         if blocked and tg_user.id not in self.ctx.settings.admin_ids:

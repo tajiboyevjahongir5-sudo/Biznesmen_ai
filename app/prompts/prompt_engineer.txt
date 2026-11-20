@@ -22,5 +22,10 @@ PROMPT TUZILISHI (o'zbek tilida, Markdown sarlavhalar bilan):
 7. NATIJA FORMATI — har bir bo'lim qanday ko'rinishda chiqishi (jadval, ro'yxat, qisqa xulosa).
 8. TEKSHIRUV MEZONLARI — javob sifatini tekshirish uchun 5-7 ta mezon.
 
+MOLIYAVIY MODEL berilgan bo'lsa, uning raqamlarini KONTEKST ga kiritib, AI dan ularni
+tekshirish va aniqlashtirishni so'ra (raqamlar dastur tomonidan hisoblangan, taxminiy
+qiymatlar alohida belgilangan). Promptni aynan shu biznesga moslashtir: umumiy
+shablon gaplar emas, foydalanuvchining shahri, mijozi, byudjeti va xavflari tilga olinsin.
+
 Prompt aniq, batafsil, lekin ortiqcha suvsiz bo'lsin. Uni o'qigan AI qo'shimcha izohsiz
 ishni boshlay olsin. Promptning o'zida tizim yoki xavfsizlik qoidalarini buzuvchi ko'rsatma bo'lmasin.

@@ -15,12 +15,20 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.agents.analyst import AnalystAgent
 from app.agents.interviewer import InterviewerAgent, Turn
 from app.agents.prompt_engineer import PromptEngineerAgent
+from app.core.finance import build_model, finance_summary_for_ai, render_finance
 from app.core.logging import user_ref
-from app.core.text import e, render_analysis, render_prompt
+from app.core.report import build_report_html
+from app.core.text import format_reply, render_analysis, render_prompt, split_message
 from app.database import repository as repo
-from app.database.models import BusinessProject, ProjectStatus
+from app.database.models import BusinessProject, Conversation, ProjectStatus
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class AnalysisOutput:
+    parts: list[str]  # Telegram xabarlari (HTML)
+    report_html: str = ""  # yuklab olinadigan to'liq hisobot
 
 
 @dataclass
@@ -51,7 +59,9 @@ class Orchestrator:
         self.min_q = min_questions
         self.max_q = max_questions
 
-    async def handle_user_text(self, *, telegram_id: int, user_db_id: int, text: str) -> TurnResult:
+    async def handle_user_text(
+        self, *, telegram_id: int, user_db_id: int, text: str, user_name: str = ""
+    ) -> TurnResult:
         """Foydalanuvchi xabarini qayta ishlaydi: yangi g'oya yoki savolga javob."""
         async with self._sf() as session:
             project = await repo.get_active_project(session, user_db_id)
@@ -59,40 +69,49 @@ class Orchestrator:
                 return TurnResult(
                     messages=["Tahlil hali davom etmoqda. Natija tayyor bo'lishi bilan yuboraman."]
                 )
+            new_project = project is None
+            added_msg_id: int | None = None
             if project is None:
                 project = await repo.create_project(session, user_db_id, text)
             else:
-                await repo.add_message(session, project.id, "user", text)
+                added_msg_id = await repo.add_message(session, project.id, "user", text)
             turns = [Turn(role=m.role, text=m.message) for m in await repo.get_messages(session, project.id)]
             idea, asked, project_id = project.idea, project.questions_asked, project.id
             await session.commit()
 
-        step = await self.interviewer.run(
-            user_id=telegram_id,
-            idea=idea,
-            turns=turns,
-            questions_asked=asked,
-            min_questions=self.min_q,
-            max_questions=self.max_q,
-        )
+        try:
+            step = await self.interviewer.run(
+                user_id=telegram_id,
+                idea=idea,
+                turns=turns,
+                questions_asked=asked,
+                min_questions=self.min_q,
+                max_questions=self.max_q,
+                user_name=user_name,
+            )
+        except Exception:
+            # AI javob bermadi: xabar tarixda "javobsiz" qolib ketmasin va qayta yuborilganda
+            # takrorlanmasin — kiritilgan yozuvni bekor qilamiz.
+            await self._rollback_turn(project_id, new_project, added_msg_id)
+            raise
 
         async with self._sf() as session:
             project = await session.get(BusinessProject, project_id)
             result = TurnResult(project_id=project_id, reaction=step.reaction)
             if step.intent == "off_topic":
                 project.status = ProjectStatus.CANCELLED
-                result.messages.append(e(step.reply))
+                result.messages.append(format_reply(step.reply))
             elif step.intent == "looking_for_idea" and asked == 0:
                 project.status = ProjectStatus.CANCELLED
                 result.looking_for_idea = True
-                result.messages.append(e(step.reply))
+                result.messages.append(format_reply(step.reply))
             else:
                 project.industry = step.industry[:120]
                 project.location = step.location[:120]
                 if step.summary:
                     project.title = step.summary[:200]
                 await repo.add_message(session, project_id, "assistant", step.reply)
-                result.messages.append(e(step.reply))
+                result.messages.append(format_reply(step.reply))
                 if step.ready_for_analysis:
                     project.status = ProjectStatus.ANALYZING
                     project.pending_question = None
@@ -110,12 +129,27 @@ class Orchestrator:
         )
         return result
 
-    async def run_analysis(self, *, telegram_id: int, user_db_id: int, project_id: int) -> list[str]:
+    async def _rollback_turn(self, project_id: int, new_project: bool, msg_id: int | None) -> None:
+        async with self._sf() as session:
+            if new_project:
+                project = await session.get(BusinessProject, project_id)
+                if project is not None:
+                    await session.delete(project)
+            elif msg_id is not None:
+                msg = await session.get(Conversation, msg_id)
+                if msg is not None:
+                    await session.delete(msg)
+            await session.commit()
+
+    async def run_analysis(self, *, telegram_id: int, user_db_id: int, project_id: int) -> AnalysisOutput:
         """Tahlil va SUPER PROMPT. Xato bo'lsa loyiha suhbat holatiga qaytadi."""
         async with self._sf() as session:
             project = await repo.get_project(session, user_db_id, project_id)
             if project is None:
-                return ["Loyiha topilmadi."]
+                return AnalysisOutput(["Loyiha topilmadi."])
+            if project.status != ProjectStatus.ANALYZING:
+                project.status = ProjectStatus.ANALYZING  # navbatdan qayta urinishda
+                await session.commit()
             messages = await repo.get_messages(session, project_id)
             notes = await repo.recent_research_notes(session, limit=3)
             idea = project.idea
@@ -129,12 +163,20 @@ class Orchestrator:
                 user_id=telegram_id, idea=idea, conversation=conversation, notes=notes_text
             )
             analysis_json = analysis.data.model_dump_json()
+            finance = build_model(analysis.data.finance)
             idea_data = f"G'oya: {idea}\n\nSuhbat:\n{conversation}"
             sources_json = json.dumps([s.__dict__ for s in analysis.sources], ensure_ascii=False)
+            finance_text = (
+                finance_summary_for_ai(finance) if finance.usable else "(moliyaviy ma'lumot yetarli emas)"
+            )
             super_prompt = await self.prompt_engineer.run(
                 user_id=telegram_id,
                 idea_data=idea_data,
-                analysis_json=analysis_json + "\nManbalar: " + sources_json,
+                analysis_json=analysis_json
+                + "\nManbalar: "
+                + sources_json
+                + "\nMOLIYAVIY MODEL (dastur hisobi):\n"
+                + finance_text,
             )
         except Exception:
             async with self._sf() as session:
@@ -150,11 +192,24 @@ class Orchestrator:
             await repo.save_analysis(session, project_id, "analyst", analysis_json)
             await repo.save_prompt(session, project_id, super_prompt.prompt)
             project.status = ProjectStatus.DONE
+            title = project.title or idea[:80]
             await session.commit()
 
         out = render_analysis(analysis.data, analysis.sources, analysis.web_used)
+        if finance.usable:
+            out += split_message(render_finance(finance))
         out += render_prompt(super_prompt.title, super_prompt.prompt, super_prompt.how_to_use)
-        return out
+        report = build_report_html(
+            project_id=project_id,
+            title=title,
+            analysis=analysis.data,
+            sources=analysis.sources,
+            web_used=analysis.web_used,
+            finance=finance if finance.usable else None,
+            prompt_title=super_prompt.title,
+            prompt_text=super_prompt.prompt,
+        )
+        return AnalysisOutput(out, report)
 
     async def cancel_active(self, user_db_id: int) -> bool:
         async with self._sf() as session:

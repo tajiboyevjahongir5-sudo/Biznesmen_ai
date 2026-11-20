@@ -135,11 +135,25 @@ Ma'lumotlar `data\biznes_mind.db` (SQLite) da, loglar `logs\bot.log` da saqlanad
 ## Botdan foydalanish
 
 Foydalanuvchi: shunchaki g'oyasini yozadi. Qo'shimcha buyruqlar: `/new`, `/cancel`, `/history`,
-`/prompt 12`, `/delete 12`, `/kanal`, `/help`.
+`/prompt 12`, `/report 12` (to'liq hisobot fayli), `/delete 12`, `/kanal`, `/help`.
+
+Tahlil oxirida bot moliyaviy modelni (marja, zararsizlik nuqtasi, 3 ssenariy, qoplash muddati)
+**Python bilan hisoblaydi** — AI faqat kirish raqamlarini beradi. To'liq hisobot HTML fayl
+sifatida yuboriladi: brauzerda ochiladi va "Chop etish → PDF" bilan PDF qilib saqlanadi.
+
+AI band bo'lsa, xabar navbatga olinadi va bot 1, 3 va 7 daqiqadan keyin qayta urinib,
+javobni o'zi yuboradi. Doimiy xatolar haqida adminlarga xabar boradi (15 daqiqada bir marta).
 
 Admin: `/admin` (statistika va AI xarajati), `/research` (izlanishni hozir boshlash),
 `/ideas`, `/publish id`, `/reject id`, `/payments`, `/confirm id`, `/block tg_id`,
-`/unblock tg_id`, `/promo`, `/settings` (kanal, karta, narx, kunlik g'oyalar va boshqalar).
+`/unblock tg_id`, `/promo`, `/settings` (kanal, karta, narx, kunlik g'oyalar va boshqalar),
+`/stats` (foydalanuvchilar, faollik, konversiya, tushum, obunachilar),
+`/broadcast` (xabarga reply qilib — hammaga yuborish, tasdiqlash bilan),
+`/sub_days 30` (oylik obuna; muddat tugashidan 3 kun oldin eslatma, tugagach kanaldan
+chiqariladi; `0` — umrbod kirish).
+
+Ma'lumotlar bazasi: yangi versiyada qo'shilgan ustunlar ishga tushishda avtomatik qo'shiladi
+(mavjud ma'lumotlar o'chirilmaydi).
 
 ## Testlar
 

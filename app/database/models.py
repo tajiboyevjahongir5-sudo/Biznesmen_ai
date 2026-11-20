@@ -35,6 +35,7 @@ class User(Base):
     first_name: Mapped[str | None] = mapped_column(String(128))
     is_blocked: Mapped[bool] = mapped_column(Boolean, default=False)
     promo_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_active_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     projects: Mapped[list[BusinessProject]] = relationship(
@@ -210,3 +211,23 @@ class PaymentNotification(Base):
     status: Mapped[str] = mapped_column(String(16))  # matched | unmatched | ignored
     raw_text: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class SubscriptionStatus:
+    ACTIVE = "active"
+    EXPIRED = "expired"
+
+
+class Subscription(Base):
+    """Pullik kanalga kirish muddati (expires_at=None — muddatsiz)."""
+
+    __tablename__ = "subscriptions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    telegram_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    status: Mapped[str] = mapped_column(String(16), default=SubscriptionStatus.ACTIVE, index=True)
+    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    reminded: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_reservation_id: Mapped[int | None] = mapped_column(Integer)

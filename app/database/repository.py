@@ -7,6 +7,8 @@ faqat o'z loyihalariga kira oladi.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,9 +18,13 @@ from app.database.models import (
     ChannelIdea,
     Conversation,
     IdeaStatus,
+    PaymentReservation,
+    PaymentStatus,
     ProjectStatus,
     PromptVersion,
     ResearchNote,
+    Subscription,
+    SubscriptionStatus,
     User,
 )
 
@@ -105,8 +111,11 @@ async def delete_project(session: AsyncSession, user_id: int, project_id: int) -
     return True
 
 
-async def add_message(session: AsyncSession, project_id: int, role: str, message: str) -> None:
-    session.add(Conversation(project_id=project_id, role=role, message=message))
+async def add_message(session: AsyncSession, project_id: int, role: str, message: str) -> int:
+    row = Conversation(project_id=project_id, role=role, message=message)
+    session.add(row)
+    await session.flush()
+    return row.id
 
 
 async def get_messages(session: AsyncSession, project_id: int) -> list[Conversation]:
@@ -183,3 +192,80 @@ async def recent_research_notes(session: AsyncSession, limit: int = 5) -> list[R
 
 async def count_users(session: AsyncSession) -> int:
     return int(await session.scalar(select(func.count()).select_from(User)) or 0)
+
+
+# --------------------------------------------------------------------- stats
+
+
+async def touch_user(session: AsyncSession, user: User, now: datetime) -> None:
+    """Faollik vaqtini yangilaydi (5 daqiqada ko'pi bilan bir marta yoziladi)."""
+    last = user.last_active_at
+    if last is not None and last.tzinfo is None:
+        last = last.replace(tzinfo=UTC)
+    if last is None or now - last > timedelta(minutes=5):
+        user.last_active_at = now
+
+
+async def bot_stats(session: AsyncSession, now: datetime) -> dict[str, int]:
+    day, week, month = now - timedelta(days=1), now - timedelta(days=7), now - timedelta(days=30)
+
+    async def count(model, *where) -> int:
+        return int(await session.scalar(select(func.count()).select_from(model).where(*where)) or 0)
+
+    async def paid_sum(since: datetime) -> int:
+        value = await session.scalar(
+            select(func.coalesce(func.sum(PaymentReservation.amount), 0)).where(
+                PaymentReservation.status == PaymentStatus.PAID, PaymentReservation.paid_at >= since
+            )
+        )
+        return int(value or 0)
+
+    return {
+        "users": await count(User),
+        "users_new_day": await count(User, User.created_at >= day),
+        "users_new_week": await count(User, User.created_at >= week),
+        "active_day": await count(User, User.last_active_at >= day),
+        "active_week": await count(User, User.last_active_at >= week),
+        "blocked": await count(User, User.is_blocked.is_(True)),
+        "projects": await count(BusinessProject),
+        "projects_week": await count(BusinessProject, BusinessProject.created_at >= week),
+        "interviewing": await count(BusinessProject, BusinessProject.status == ProjectStatus.INTERVIEWING),
+        "done": await count(BusinessProject, BusinessProject.status == ProjectStatus.DONE),
+        "done_week": await count(
+            BusinessProject, BusinessProject.status == ProjectStatus.DONE, BusinessProject.updated_at >= week
+        ),
+        "paid_day": await count(
+            PaymentReservation,
+            PaymentReservation.status == PaymentStatus.PAID,
+            PaymentReservation.paid_at >= day,
+        ),
+        "paid_month": await count(
+            PaymentReservation,
+            PaymentReservation.status == PaymentStatus.PAID,
+            PaymentReservation.paid_at >= month,
+        ),
+        "revenue_day": await paid_sum(day),
+        "revenue_month": await paid_sum(month),
+        "subscribers": await count(Subscription, Subscription.status == SubscriptionStatus.ACTIVE),
+        "ideas_published": await count(ChannelIdea, ChannelIdea.status == IdeaStatus.PUBLISHED),
+        "prompt_requests": int(
+            await session.scalar(select(func.coalesce(func.sum(ChannelIdea.prompt_requests), 0))) or 0
+        ),
+    }
+
+
+async def broadcast_targets(session: AsyncSession) -> list[int]:
+    rows = await session.scalars(select(User.telegram_id).where(User.is_blocked.is_(False)).order_by(User.id))
+    return list(rows.all())
+
+
+async def latest_analysis(session: AsyncSession, user_id: int, project_id: int) -> str | None:
+    project = await get_project(session, user_id, project_id)
+    if project is None:
+        return None
+    return await session.scalar(
+        select(AgentAnalysis.analysis)
+        .where(AgentAnalysis.project_id == project_id, AgentAnalysis.agent_name == "analyst")
+        .order_by(AgentAnalysis.id.desc())
+        .limit(1)
+    )

@@ -58,3 +58,49 @@ async def payment_sweeper_loop(ctx: AppContext, interval: float = 20.0) -> None:
         except Exception:  # noqa: BLE001
             logger.exception("payment_sweeper_failed")
         await asyncio.sleep(interval)
+
+
+async def subscription_loop(bot: Bot, ctx: AppContext, interval: float = 1800.0) -> None:
+    """Obuna muddati: 3 kun qolganda eslatma, tugaganda kanaldan chiqarish."""
+    from aiogram.exceptions import TelegramAPIError
+
+    from app.bot.helpers import promo_kb
+    from app.database.models import SubscriptionStatus
+
+    while True:
+        try:
+            for sub in await ctx.subscriptions.due_reminders():
+                try:
+                    await bot.send_message(
+                        sub.telegram_id,
+                        "⏰ Kanal obunangiz tugashiga oz qoldi "
+                        f"(<b>{sub.expires_at:%d.%m.%Y}</b>). Uzaytirish uchun pastdagi tugmani bosing.",
+                        reply_markup=promo_kb(),
+                    )
+                except TelegramAPIError:
+                    logger.info("subscription_reminder_failed sub=%d", sub.id)
+                await ctx.subscriptions.mark(sub.id, reminded=True)
+            for sub in await ctx.subscriptions.due_expired():
+                channel = ctx.settings.ideas_channel_id
+                if channel and sub.telegram_id not in ctx.settings.admin_ids:
+                    try:
+                        # ban + unban = kanaldan chiqarish (keyin to'lab qayta kira oladi)
+                        await bot.ban_chat_member(channel, sub.telegram_id)
+                        await bot.unban_chat_member(channel, sub.telegram_id, only_if_banned=True)
+                    except TelegramAPIError:
+                        logger.warning("subscription_kick_failed sub=%d", sub.id)
+                await ctx.subscriptions.mark(sub.id, status=SubscriptionStatus.EXPIRED)
+                try:
+                    await bot.send_message(
+                        sub.telegram_id,
+                        "📭 Kanal obunangiz muddati tugadi. Qayta qo'shilish uchun pastdagi tugmani bosing.",
+                        reply_markup=promo_kb(),
+                    )
+                except TelegramAPIError:
+                    pass
+                logger.info("subscription_expired sub=%d", sub.id)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            logger.exception("subscription_loop_failed")
+        await asyncio.sleep(interval)

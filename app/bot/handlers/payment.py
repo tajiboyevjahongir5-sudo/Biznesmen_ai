@@ -12,10 +12,10 @@ from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from app.bot.context import AppContext
-from app.bot.helpers import CB_PAY_CANCEL, CB_PAY_START, is_channel_member
+from app.bot.helpers import CB_PAY_CANCEL, CB_PAY_START, access_period, is_channel_member
 from app.core.logging import user_ref
 from app.core.text import e, format_money
-from app.database.models import PaymentReservation, PaymentStatus
+from app.database.models import PaymentReservation, PaymentStatus, User
 from app.services.payment_parser import parse_payment
 from app.services.payment_service import NoFreeAmountError
 from app.services.runtime_settings import CHANNEL_KINDS
@@ -42,12 +42,12 @@ def payment_text(ctx: AppContext, r: PaymentReservation, now: datetime) -> str:
     mm, ss = divmod(left, 60)
     holder = f"\nKarta egasi: <b>{e(s.payment_card_holder)}</b>" if s.payment_card_holder else ""
     return (
-        "<b>Kanalga kirish uchun to'lov</b>\n\n"
+        f"💳 <b>Kanalga kirish uchun to'lov</b> {access_period(s.subscription_days)}\n\n"
         f"Karta raqami: <code>{_card(s.payment_card_number)}</code>{holder}\n"
         f"To'lov summasi: <code>{r.amount}</code> so'm\n"
         f"(<b>{format_money(r.amount)} so'm</b> — aynan shu summani o'tkazing)\n\n"
-        f"Qolgan vaqt: <b>{mm}:{ss:02d}</b>\n\n"
-        "Muhim:\n"
+        f"⏳ Qolgan vaqt: <b>{mm}:{ss:02d}</b>\n\n"
+        "📌 Muhim:\n"
         f"• Summaning oxirgi raqamlari ({r.offset}) sizning to'lovingizni boshqalardan ajratadi. "
         "Summani yaxlitlamang.\n"
         "• To'lov tushishi bilan sizga bir martalik kirish havolasini yuboraman.\n"
@@ -71,8 +71,10 @@ async def pay_start(cb: CallbackQuery, ctx: AppContext, db_user_id: int, bot: Bo
         await cb.answer("To'lov hozircha sozlanmagan.", show_alert=True)
         return
     if await is_channel_member(bot, ctx, tg_id):
-        await cb.answer("Siz allaqachon kanal a'zosisiz.", show_alert=True)
-        return
+        sub = await ctx.subscriptions.active_for(db_user_id)
+        if not ctx.subscriptions.renewable(sub):
+            await cb.answer("Siz allaqachon kanal a'zosisiz ✅", show_alert=True)
+            return
     try:
         reservation, created = await ctx.payments.reserve(db_user_id, cb.message.chat.id)
     except NoFreeAmountError:
@@ -162,9 +164,26 @@ async def _safe_edit(
 
 
 async def deliver_access(bot: Bot, ctx: AppContext, r: PaymentReservation) -> bool:
-    """Bir martalik (member_limit=1) va muddatli kirish havolasini yaratib yuboradi."""
+    """Obunani yozadi va bir martalik (member_limit=1) muddatli kirish havolasini yuboradi.
+
+    Foydalanuvchi allaqachon a'zo bo'lsa (obunani uzaytirish), havola kerak emas.
+    """
     s = ctx.settings
     stop_timer(r.id)
+    tg_id = await _telegram_id(ctx, r.user_id)
+    sub = await ctx.subscriptions.grant(r.user_id, tg_id or r.chat_id, s.subscription_days, r.id)
+    until = f"\n📅 Obuna muddati: <b>{_aware(sub.expires_at):%d.%m.%Y}</b> gacha." if sub.expires_at else ""
+    if tg_id and await is_channel_member(bot, ctx, tg_id):
+        if r.message_id:
+            await _safe_edit(
+                bot,
+                r.chat_id,
+                r.message_id,
+                f"✅ To'lov qabul qilindi: <b>{format_money(r.amount)} so'm</b>.",
+            )
+        await bot.send_message(r.chat_id, "🎉 Rahmat! Obunangiz uzaytirildi." + until)
+        logger.info("subscription_renewed reservation=%d", r.id)
+        return True
     try:
         link = await bot.create_chat_invite_link(
             chat_id=s.ideas_channel_id,
@@ -190,17 +209,23 @@ async def deliver_access(bot: Bot, ctx: AppContext, r: PaymentReservation) -> bo
             bot, r.chat_id, r.message_id, f"To'lov qabul qilindi: <b>{format_money(r.amount)} so'm</b>."
         )
     kb = InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text="Kanalga kirish", url=link.invite_link)]]
+        inline_keyboard=[[InlineKeyboardButton(text="🚪 Kanalga kirish", url=link.invite_link)]]
     )
     await bot.send_message(
         r.chat_id,
-        "Rahmat! To'lovingiz tasdiqlandi.\n\n"
-        f"Bu havola <b>faqat bir marta</b> ishlaydi va {s.invite_link_ttl_hours} soat ichida "
-        "amal qiladi. Uni boshqalarga bermang.",
+        "🎉 Rahmat! To'lovingiz tasdiqlandi.\n\n"
+        f"🔐 Bu havola <b>faqat bir marta</b> ishlaydi va {s.invite_link_ttl_hours} soat ichida "
+        "amal qiladi. Uni boshqalarga bermang." + until,
         reply_markup=kb,
     )
     logger.info("access_delivered reservation=%d", r.id)
     return True
+
+
+async def _telegram_id(ctx: AppContext, user_id: int) -> int | None:
+    async with ctx.session_factory() as session:
+        user = await session.get(User, user_id)
+        return user.telegram_id if user else None
 
 
 async def _notify_admins(bot: Bot, ctx: AppContext, text: str) -> None:

@@ -11,6 +11,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from app.agents.base import load_prompt
+from app.core.finance import FinanceInputs
 from app.core.security import wrap_untrusted
 from app.services.ai_service import AIResult, AIService
 
@@ -69,6 +70,7 @@ class MarketAnalysis(BaseModel):
     verdict_reasons: list[str]
     next_steps: list[str]
     confidence: Level
+    finance: FinanceInputs = Field(default_factory=FinanceInputs)
 
 
 def build_input(idea: str, conversation: str, notes: str, web: bool) -> str:
@@ -100,6 +102,6 @@ class AnalystAgent:
             instructions=self._prompt,
             user_input=build_input(idea, conversation, notes, web),
             schema=MarketAnalysis,
-            max_output_tokens=4000,
+            max_output_tokens=8000,
             web_search=web,
         )

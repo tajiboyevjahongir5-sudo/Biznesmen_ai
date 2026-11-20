@@ -12,17 +12,20 @@ Buyruqlar:
 /unblock <tg_id>  — blokdan chiqarish
 /promo            — kanal reklamasini ko'rish
 /settings         — kanal, karta, narx sozlamalari (DB da saqlanadi)
+/stats            — batafsil statistika
+/broadcast        — hammaga xabar (reply qilib)
 """
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
 import re
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 from aiogram import Bot, F, Router
-from aiogram.exceptions import TelegramAPIError
+from aiogram.exceptions import TelegramAPIError, TelegramRetryAfter
 from aiogram.filters import Command, CommandObject
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
@@ -113,6 +116,8 @@ async def admin_home(message: Message, ctx: AppContext) -> None:
         "/block tg_id · /unblock tg_id",
         "/promo — reklama ko'rinishi",
         "/settings — kanal, karta, narx va boshqa sozlamalar",
+        "/stats — batafsil statistika",
+        "/broadcast — hammaga xabar yuborish",
     ]
     await message.answer("\n".join(lines))
 
@@ -283,6 +288,7 @@ SETTINGS_HELP = (
     "/card_holder Ism Familiya — karta egasi\n"
     "/price 50000 — kanalga kirish narxi (so'm)\n"
     "/pay_minutes 5 — to'lov uchun vaqt (daqiqa)\n"
+    "/sub_days 30 — obuna muddati (0 — umrbod)\n"
     "/channel_title Nomi — kanal nomi (reklamada)\n"
     "/daily_ideas 2 — kuniga nechta g'oya\n"
     "/research_time 09:00 — kunlik izlanish vaqti\n"
@@ -305,6 +311,7 @@ async def settings_cmd(message: Message, ctx: AppContext) -> None:
         f"Karta: {mask_card(s.payment_card_number)}",
         f"Karta egasi: {e(s.payment_card_holder) or 'kiritilmagan'}",
         f"Narx: {format_money(s.channel_price_uzs)} so'm",
+        f"Obuna muddati: {f'{s.subscription_days} kun' if s.subscription_days else 'umrbod (bir martalik)'}",
         f"To'lov vaqti: {s.payment_timeout_seconds // 60} daqiqa",
         f"Kanal nomi: {e(s.ideas_channel_title)}",
         f"Kunlik g'oyalar: {s.daily_ideas_count} ta, soat {s.daily_research_time} ({s.timezone})",
@@ -443,3 +450,151 @@ async def link_payment_cmd(message: Message, ctx: AppContext) -> None:
 @router.message(Command("promo"))
 async def promo_cmd(message: Message, ctx: AppContext, bot: Bot) -> None:
     await send_parts(bot, message.chat.id, [promo_text(ctx)], reply_markup=promo_kb())
+
+
+@router.message(Command("sub_days"))
+async def sub_days_cmd(message: Message, command: CommandObject, ctx: AppContext) -> None:
+    value = _arg(command)
+    if not value.isdigit() or int(value) > 3650:
+        await message.answer("Masalan: /sub_days 30 (oylik obuna) yoki /sub_days 0 (umrbod kirish)")
+        return
+    days = int(value)
+    await _set(
+        message,
+        ctx,
+        "subscription_days",
+        str(days),
+        f"Obuna muddati: {days} kun." if days else "Kirish endi umrbod (bir martalik to'lov).",
+    )
+
+
+# ------------------------------------------------------------------ statistika
+
+
+@router.message(Command("stats"))
+async def stats_cmd(message: Message, ctx: AppContext) -> None:
+    async with ctx.session_factory() as session:
+        st = await repo.bot_stats(session, datetime.now(UTC))
+    conv = f"{st['done'] / st['projects'] * 100:.0f}%" if st["projects"] else "—"
+    lines = [
+        "📊 <b>STATISTIKA</b>",
+        "",
+        "👥 <b>Foydalanuvchilar</b>",
+        f"Jami: <b>{st['users']}</b> · bloklangan: {st['blocked']}",
+        f"Yangi: 24 soat — {st['users_new_day']}, 7 kun — {st['users_new_week']}",
+        f"Faol: 24 soat — {st['active_day']}, 7 kun — {st['active_week']}",
+        "",
+        "💡 <b>Loyihalar</b>",
+        f"Jami: {st['projects']} (7 kunda {st['projects_week']})",
+        f"Suhbat davom etmoqda: {st['interviewing']}",
+        f"Tahlil tugagan: {st['done']} (7 kunda {st['done_week']}) · konversiya {conv}",
+        "",
+        "💳 <b>To'lovlar</b>",
+        f"24 soat: {st['paid_day']} ta — <b>{format_money(st['revenue_day'])} so'm</b>",
+        f"30 kun: {st['paid_month']} ta — <b>{format_money(st['revenue_month'])} so'm</b>",
+        f"Faol obunachilar: {st['subscribers']}",
+        "",
+        "📢 <b>Kanal</b>",
+        f"Joylangan g'oyalar: {st['ideas_published']} · prompt so'rovlari: {st['prompt_requests']}",
+        "",
+        "🤖 <b>Bugungi AI</b>",
+        f"So'rovlar: {ctx.ai.usage.global_requests}/{ctx.settings.ai_daily_requests_global}",
+    ]
+    await message.answer("\n".join(lines))
+
+
+# ------------------------------------------------------------------ broadcast
+
+CB_BC_SEND = "adm:bc:send"
+CB_BC_CANCEL = "adm:bc:cancel"
+_pending_broadcasts: dict[int, tuple[int, int]] = {}  # admin_id -> (chat_id, message_id)
+_broadcast_running = False
+
+
+@router.message(Command("broadcast"))
+async def broadcast_cmd(message: Message, ctx: AppContext) -> None:
+    """Admin biror xabarga javob (reply) qilib /broadcast yozadi — o'sha xabar hammaga nusxalanadi."""
+    src = message.reply_to_message
+    if src is None:
+        await message.answer(
+            "📣 Hammaga xabar yuborish:\n\n"
+            "1. Yubormoqchi bo'lgan xabaringizni (matn, rasm, video) shu chatga yozing.\n"
+            "2. O'sha xabarga <b>javob (reply)</b> qilib /broadcast yuboring.\n"
+            "3. Tasdiqlash tugmasini bosing."
+        )
+        return
+    async with ctx.session_factory() as session:
+        targets = await repo.broadcast_targets(session)
+    _pending_broadcasts[message.from_user.id] = (src.chat.id, src.message_id)
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text=f"✅ {len(targets)} kishiga yuborish", callback_data=CB_BC_SEND),
+                InlineKeyboardButton(text="❌ Bekor qilish", callback_data=CB_BC_CANCEL),
+            ]
+        ]
+    )
+    await message.answer(
+        f"Yuqoridagi xabar <b>{len(targets)}</b> foydalanuvchiga yuboriladi. Tasdiqlaysizmi?", reply_markup=kb
+    )
+
+
+@router.callback_query(F.data == CB_BC_CANCEL)
+async def broadcast_cancel(cb: CallbackQuery) -> None:
+    _pending_broadcasts.pop(cb.from_user.id, None)
+    await cb.answer("Bekor qilindi")
+    with contextlib.suppress(TelegramAPIError):
+        await cb.message.edit_text("Xabar yuborish bekor qilindi.")
+
+
+@router.callback_query(F.data == CB_BC_SEND)
+async def broadcast_send(cb: CallbackQuery, ctx: AppContext, bot: Bot) -> None:
+    global _broadcast_running
+    src = _pending_broadcasts.pop(cb.from_user.id, None)
+    if src is None:
+        await cb.answer("Tasdiqlanadigan xabar topilmadi. /broadcast ni qayta yuboring.", show_alert=True)
+        return
+    if _broadcast_running:
+        await cb.answer("Boshqa xabar yuborilmoqda, tugashini kuting.", show_alert=True)
+        return
+    await cb.answer("Yuborish boshlandi")
+    with contextlib.suppress(TelegramAPIError):
+        await cb.message.edit_text("📤 Yuborilmoqda...")
+    _broadcast_running = True
+    task = asyncio.create_task(_run_broadcast(bot, ctx, cb.from_user.id, *src))
+    _bc_tasks.add(task)
+    task.add_done_callback(_bc_tasks.discard)
+
+
+_bc_tasks: set[asyncio.Task] = set()
+
+
+async def _run_broadcast(bot: Bot, ctx: AppContext, admin_id: int, chat_id: int, message_id: int) -> None:
+    global _broadcast_running
+    sent = failed = 0
+    try:
+        async with ctx.session_factory() as session:
+            targets = await repo.broadcast_targets(session)
+        for tg_id in targets:
+            for _ in range(2):
+                try:
+                    await bot.copy_message(tg_id, chat_id, message_id)
+                    sent += 1
+                    break
+                except TelegramRetryAfter as exc:
+                    await asyncio.sleep(min(exc.retry_after, 60))
+                except TelegramAPIError:
+                    failed += 1  # bot bloklangan yoki akkaunt o'chirilgan
+                    break
+            await asyncio.sleep(0.05)  # Telegram limiti: ~20 xabar/soniya
+        logger.info("broadcast_done sent=%d failed=%d", sent, failed)
+        await bot.send_message(
+            admin_id,
+            f"✅ Xabar yuborildi: <b>{sent}</b> ta. Yetib bormadi: {failed} ta (botni bloklaganlar).",
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("broadcast_failed")
+        with contextlib.suppress(TelegramAPIError):
+            await bot.send_message(admin_id, f"Xabar yuborish to'xtadi. Yuborilgan: {sent} ta.")
+    finally:
+        _broadcast_running = False
