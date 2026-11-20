@@ -43,6 +43,14 @@ class Settings(BaseSettings):
     gemini_api_key: SecretStr = Field(default=SecretStr(""), alias="GEMINI_API_KEY")
     openai_api_key: SecretStr = Field(default=SecretStr(""), alias="OPENAI_API_KEY")
 
+    # --- Userbot: bank bot (HUMO Card) xabarlarini o'qib, to'lovni avtomatik tasdiqlash ---
+    # my.telegram.org dan olinadi. TG_SESSION — `python -m app.tools.make_session` natijasi.
+    tg_api_id: int | None = Field(default=None, alias="TG_API_ID")
+    tg_api_hash: SecretStr = Field(default=SecretStr(""), alias="TG_API_HASH")
+    tg_session: SecretStr = Field(default=SecretStr(""), alias="TG_SESSION")
+    # Bildirishnoma yuboradigan bank boti (masalan: HUMOcardbot). Admin: /bank_bot
+    bank_bot_username: str = Field(default="", alias="BANK_BOT_USERNAME")
+
     # --- AI provayder: "gemini" (standart) yoki "openai" ---
     ai_provider: str = Field(default="gemini", alias="AI_PROVIDER")
 
@@ -199,7 +207,15 @@ class Settings(BaseSettings):
                 return "postgresql+asyncpg://" + value[len(prefix) :]
         return value
 
-    @field_validator("ideas_channel_id", "payment_channel_id", "openai_base_url", mode="before")
+    @field_validator("bank_bot_username")
+    @classmethod
+    def _clean_bank_bot(cls, value: str) -> str:
+        value = value.strip().removeprefix("https://t.me/").removeprefix("@").strip("/")
+        if value and not value.replace("_", "").isalnum():
+            raise ValueError("bot username noto'g'ri")
+        return value[:64]
+
+    @field_validator("ideas_channel_id", "payment_channel_id", "openai_base_url", "tg_api_id", mode="before")
     @classmethod
     def _empty_to_none(cls, value: object) -> object:
         return None if value == "" else value
@@ -240,7 +256,8 @@ class Settings(BaseSettings):
 
     @property
     def payments_configured(self) -> bool:
-        return bool(self.payment_card_number and self.payment_channel_id and self.ideas_channel_id)
+        source = self.payment_channel_id or self.userbot_enabled
+        return bool(self.payment_card_number and source and self.ideas_channel_id)
 
     def secret_values(self) -> list[str]:
         """Loglardan yashirilishi kerak bo'lgan qiymatlar ro'yxati."""
@@ -248,8 +265,19 @@ class Settings(BaseSettings):
             self.bot_token.get_secret_value(),
             self.openai_api_key.get_secret_value(),
             self.gemini_api_key.get_secret_value(),
+            self.tg_api_hash.get_secret_value(),
+            self.tg_session.get_secret_value(),
         ]
         return [v for v in values if v and len(v) >= 8]
+
+    @property
+    def userbot_enabled(self) -> bool:
+        return bool(
+            self.tg_api_id
+            and self.tg_api_hash.get_secret_value()
+            and self.tg_session.get_secret_value()
+            and self.bank_bot_username
+        )
 
     def missing_required(self) -> list[str]:
         """Bot ishga tushishi uchun yetishmayotgan sozlamalar nomlari."""

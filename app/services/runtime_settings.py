@@ -38,6 +38,7 @@ EDITABLE_KEYS: frozenset[str] = frozenset(
         "subscription_days",
         "research_provider",
         "followup_days",
+        "bank_bot_username",
     }
 )
 

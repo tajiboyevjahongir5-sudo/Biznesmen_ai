@@ -7,3 +7,5 @@ SQLAlchemy[asyncio]==2.0.58
 aiosqlite==0.22.1
 asyncpg==0.32.0
 tzdata==2026.6
+# Userbot: bank bildirishnomalarini avtomatik o'qish (ixtiyoriy)
+telethon==1.46.0

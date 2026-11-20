@@ -166,6 +166,33 @@ chiqariladi; `0` — umrbod kirish).
 Ma'lumotlar bazasi: yangi versiyada qo'shilgan ustunlar ishga tushishda avtomatik qo'shiladi
 (mavjud ma'lumotlar o'chirilmaydi).
 
+## Avtomatik to'lov (userbot)
+
+HUMO Card kabi bank botlari bildirishnomani **sizning shaxsiy chatingizga** yuboradi —
+oddiy Telegram bot uni o'qiy olmaydi. Shuning uchun karta egasining akkaunti nomidan
+ishlaydigan kichik mijoz (Telethon) bank botidagi **kirim** xabarlarini o'qib, noyob summa
+bilan solishtiradi va foydalanuvchiga darhol havola yuboradi.
+
+Xavfsizlik: faqat bitta bank botidan kelgan kiruvchi xabarlar o'qiladi (bot ekani va ID si
+tekshiriladi), boshqa chatlar o'qilmaydi, hech narsa yuborilmaydi.
+
+Sozlash (bir marta):
+
+1. https://my.telegram.org → **API development tools** → ilova yarating, `API ID` va
+   `API HASH` ni oling.
+2. O'z kompyuteringizda (loyiha papkasida) sessiya yarating — telefon raqam va Telegram
+   kodi so'raladi:
+   ```powershell
+   .\.venv\Scripts\python -m app.tools.make_session
+   ```
+3. Railway → Variables ga qo'shing: `TG_API_ID`, `TG_API_HASH`, `TG_SESSION`
+   (skript chiqargan kalit). Bu qiymatlarni chatga yoki GitHub ga yozmang.
+4. Botda admin sifatida: `/bank_bot HUMOcardbot` (bank botingizning username'i —
+   bot profilida ko'rinadi), so'ng Railway'da **Redeploy**.
+5. `/userbot` — holat 🟢 bo'lishi kerak. To'lov kanali endi shart emas.
+
+Sessiyani bekor qilish: Telegram → Sozlamalar → Qurilmalar → "BIZNES MIND payments".
+
 ## Testlar
 
 ```powershell

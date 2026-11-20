@@ -40,6 +40,8 @@ from app.services.scheduler import (
     subscription_loop,
 )
 from app.services.subscription_service import SubscriptionService
+from app.services.userbot import STATUS as USERBOT_STATUS
+from app.services.userbot import start_userbot, stop_userbot
 
 logger = logging.getLogger("app")
 
@@ -128,6 +130,9 @@ async def run() -> None:
         logger.info("Internet qidiruvi o'chirilgan (RESEARCH_PROVIDER=none)")
 
     dp = build_dispatcher(ctx)
+    userbot_task = await start_userbot(bot, ctx)
+    if settings.userbot_enabled and userbot_task is None:
+        logger.error("Userbot ishga tushmadi: %s", USERBOT_STATUS.error)
     restored = await payment.restore_timers(bot, ctx)  # redeploydan keyin taymerlar davom etadi
     if restored:
         logger.info("To'lov taymerlari tiklandi: %d ta", restored)
@@ -142,6 +147,9 @@ async def run() -> None:
     try:
         await dp.start_polling(bot, allowed_updates=["message", "callback_query", "channel_post"])
     finally:
+        await stop_userbot()
+        if userbot_task:
+            userbot_task.cancel()
         for t in tasks:
             t.cancel()
         await bot.session.close()

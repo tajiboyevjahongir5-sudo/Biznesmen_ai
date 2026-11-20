@@ -281,14 +281,33 @@ async def payment_channel_post(post: Message, ctx: AppContext, bot: Bot) -> None
         return
     if not s.payment_channel_id or post.chat.id != s.payment_channel_id:
         return
-    text = post.text or post.caption or ""
+    await process_bank_message(
+        bot, ctx, post.chat.id, post.message_id, post.text or post.caption or "", "kanal"
+    )
+
+
+async def process_bank_message(
+    bot: Bot, ctx: AppContext, chat_id: int, message_id: int, text: str, source: str
+) -> str:
+    """Bank bildirishnomasini qayd etib, kutilayotgan to'lov bilan solishtiradi.
+
+    To'lov kanali ham, userbot (bank botidan to'g'ridan-to'g'ri) ham shu funksiyani chaqiradi.
+    (chat_id, message_id) juftligi takror kelsa, ikkinchi marta hisoblanmaydi.
+    """
+    s = ctx.settings
     parsed = parse_payment(text, s.payment_amount_regex)
     amount = parsed.amount if parsed and parsed.is_income and parsed.amount > 0 else None
-    result = await ctx.payments.handle_notification(post.chat.id, post.message_id, amount, text)
-    logger.info("payment_notification status=%s amount=%s", result.status, amount)
+    result = await ctx.payments.handle_notification(chat_id, message_id, amount, text)
+    logger.info("payment_notification source=%s status=%s amount=%s", source, result.status, amount)
 
     if result.status == "matched" and result.reservation:
-        await deliver_access(bot, ctx, result.reservation)
+        ok = await deliver_access(bot, ctx, result.reservation)
+        await _notify_admins(
+            bot,
+            ctx,
+            f"✅ To'lov #{result.reservation.id}: <b>{format_money(amount)} so'm</b> avtomatik tasdiqlandi"
+            + ("." if ok else ", lekin havola yuborilmadi!"),
+        )
     elif result.status == "unmatched":
         recent = await ctx.payments.recent_by_amount(amount)
         hint = ""
@@ -303,6 +322,7 @@ async def payment_channel_post(post: Message, ctx: AppContext, bot: Bot) -> None
             ctx,
             f"Mos kelmagan to'lov: <b>{format_money(amount)} so'm</b> (kech yoki noto'g'ri summa).{hint}",
         )
+    return result.status
 
 
 async def restore_timers(bot: Bot, ctx: AppContext) -> int:

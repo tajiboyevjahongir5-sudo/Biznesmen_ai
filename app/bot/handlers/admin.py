@@ -121,6 +121,7 @@ async def admin_home(message: Message, ctx: AppContext) -> None:
         "/broadcast — hammaga xabar yuborish",
         "/websearch on|off — internet (Google) qidiruvi",
         "/parsetest — bank xabarini parser qanday o'qishini tekshirish",
+        "/userbot — avtomatik to'lov holati",
     ]
     await message.answer("\n".join(lines))
 
@@ -293,6 +294,7 @@ SETTINGS_HELP = (
     "/pay_minutes 5 — to'lov uchun vaqt (daqiqa)\n"
     "/sub_days 30 — obuna muddati (0 — umrbod)\n"
     "/followup_days 7 — tahlildan keyin kuzatuv (0 — o'chiq)\n"
+    "/bank_bot HUMOcardbot — bank boti (userbot uchun)\n"
     "/websearch on|off — internet qidiruvi\n"
     "/channel_title Nomi — kanal nomi (reklamada)\n"
     "/daily_ideas 2 — kuniga nechta g'oya\n"
@@ -313,6 +315,8 @@ async def settings_cmd(message: Message, ctx: AppContext) -> None:
         "",
         f"G'oyalar kanali: {ch(s.ideas_channel_id)}",
         f"To'lov kanali: {ch(s.payment_channel_id)}",
+        f"Avtomatik to'lov (userbot): {'sozlangan' if s.userbot_enabled else 'o`chiq'}"
+        + (f" · @{e(s.bank_bot_username)}" if s.bank_bot_username else ""),
         f"Karta: {mask_card(s.payment_card_number)}",
         f"Karta egasi: {e(s.payment_card_holder) or 'kiritilmagan'}",
         f"Narx: {format_money(s.channel_price_uzs)} so'm",
@@ -674,3 +678,56 @@ async def parsetest_cmd(message: Message, command: CommandObject, ctx: AppContex
         )
     custom = "maxsus regex" if ctx.settings.payment_amount_regex else "standart qoidalar"
     await message.answer(f"{result}\n\n<i>Ishlatilgan: {custom}.</i>")
+
+
+@router.message(Command("userbot"))
+async def userbot_cmd(message: Message, ctx: AppContext) -> None:
+    from app.services.userbot import STATUS
+
+    s = ctx.settings
+    if not s.userbot_enabled:
+        missing = [
+            name
+            for name, ok in (
+                ("TG_API_ID", s.tg_api_id),
+                ("TG_API_HASH", s.tg_api_hash.get_secret_value()),
+                ("TG_SESSION", s.tg_session.get_secret_value()),
+                ("BANK_BOT_USERNAME (/bank_bot)", s.bank_bot_username),
+            )
+            if not ok
+        ]
+        await message.answer(
+            "🤖 <b>Avtomatik to'lov (userbot): o'chiq</b>\n\nYetishmayapti: " + ", ".join(missing) + "\n\n"
+            "Yo'riqnoma: README → «Avtomatik to'lov (userbot)»."
+        )
+        return
+
+    def t(dt):
+        return f"{dt:%d.%m %H:%M} UTC" if dt else "—"
+
+    state = "🟢 ulangan" if STATUS.connected else "🔴 ulanmagan"
+    lines = [
+        f"🤖 <b>Avtomatik to'lov (userbot): {state}</b>",
+        f"Bank boti: @{e(s.bank_bot_username)}",
+        f"Ishga tushgan: {t(STATUS.started_at)}",
+        f"Oxirgi bank xabari: {t(STATUS.last_message_at)}",
+        f"Qayta ishlangan: {STATUS.processed} · tasdiqlangan to'lovlar: {STATUS.matched}",
+    ]
+    if STATUS.error:
+        lines.append(f"⚠️ Xato: {e(STATUS.error)}")
+    await message.answer("\n".join(lines))
+
+
+@router.message(Command("bank_bot"))
+async def bank_bot_cmd(message: Message, command: CommandObject, ctx: AppContext) -> None:
+    value = _arg(command)
+    if not value:
+        await message.answer("Masalan: /bank_bot HUMOcardbot (bildirishnoma keladigan bank boti username)")
+        return
+    await _set(
+        message,
+        ctx,
+        "bank_bot_username",
+        value,
+        "Bank boti saqlandi. Kuchga kirishi uchun Railway'da botni qayta ishga tushiring (Redeploy).",
+    )
