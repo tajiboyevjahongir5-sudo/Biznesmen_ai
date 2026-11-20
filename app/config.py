@@ -126,6 +126,10 @@ class Settings(BaseSettings):
     post_images: bool = Field(default=False, alias="POST_IMAGES")
     # Bo'sh — kalitga ochiq rasm modellaridan avtomatik tanlanadi.
     gemini_image_model: str = Field(default="", alias="GEMINI_IMAGE_MODEL")
+    # Rasm manbasi: stock — Pexels bepul fotolari, ai — Gemini rasm modeli, auto — avval stock, keyin ai.
+    post_image_source: str = Field(default="stock", alias="POST_IMAGE_SOURCE")
+    # Pexels API kaliti (bepul): https://www.pexels.com/api/ — faqat .env / Railway Variables orqali.
+    pexels_api_key: SecretStr = Field(default=SecretStr(""), alias="PEXELS_API_KEY")
 
     # --- To'lov ---
     payment_channel_id: int | None = Field(default=None, alias="PAYMENT_CHANNEL_ID")
@@ -211,6 +215,14 @@ class Settings(BaseSettings):
                 return "postgresql+asyncpg://" + value[len(prefix) :]
         return value
 
+    @field_validator("post_image_source")
+    @classmethod
+    def _validate_image_source(cls, value: str) -> str:
+        value = value.strip().lower()
+        if value not in {"stock", "ai", "auto"}:
+            raise ValueError("rasm manbasi: stock, ai yoki auto")
+        return value
+
     @field_validator("gemini_image_model")
     @classmethod
     def _clean_image_model(cls, value: str) -> str:
@@ -280,6 +292,7 @@ class Settings(BaseSettings):
             self.gemini_api_key.get_secret_value(),
             self.tg_api_hash.get_secret_value(),
             self.tg_session.get_secret_value(),
+            self.pexels_api_key.get_secret_value(),
         ]
         return [v for v in values if v and len(v) >= 8]
 

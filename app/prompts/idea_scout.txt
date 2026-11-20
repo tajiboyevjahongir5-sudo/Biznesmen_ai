@@ -18,3 +18,4 @@ QOIDALAR
 7. Noqonuniy, litsenziyasiz moliyaviy, qimor, piramida yoki sog'liq uchun xavfli g'oyalarni taklif qilma.
 8. O'zbek tilida (lotin). Boshlang'ich xarajat — taxminiy oraliq, so'mda va "taxmin" deb.
 9. market_notes — bugun bozor haqida nimani o'rganding (5-8 gap): bu keyingi kunlar uchun bilim bo'ladi.
+10. image_query — g'oyani ifodalaydigan foto topish uchun 2-4 ta INGLIZCHA so'z (narsa, joy yoki faoliyat; brend va ism yozma). Masalan: "healthy breakfast delivery".

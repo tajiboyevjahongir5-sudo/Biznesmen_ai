@@ -21,6 +21,8 @@ from app.database import repository as repo
 from app.database.models import ChannelIdea, IdeaStatus
 from app.services.ai_service import AIService
 from app.services.gemini_native import GeneratedImage
+from app.services.post_images import ImageUnavailableError, PostImageService
+from app.services.stock_photos import PexelsClient
 
 logger = logging.getLogger(__name__)
 
@@ -31,18 +33,6 @@ def idea_deep_link(bot_username: str, idea_id: int) -> str:
     return f"https://t.me/{bot_username}?start={DEEP_LINK_PREFIX}{idea_id}"
 
 
-def image_prompt(title: str, one_liner: str) -> str:
-    """Kanal posti uchun rasm topshirig'i. Rasmda yozuv bo'lmasligi shart (AI matnni buzadi)."""
-    return (
-        "Create an eye-catching, premium cover illustration for a Telegram channel post about a "
-        "business idea. Style: modern 3D isometric illustration, soft studio lighting, clean "
-        "gradient background, vibrant but professional colors, wide 16:9 composition. Show the "
-        "concept with objects, places and simple stylized people. STRICT RULES: no text, no letters, "
-        "no numbers, no logos, no watermarks, no brand names, no real persons. "
-        "Business idea (in Uzbek): " + " ".join(f"{title}. {one_liner}".split())[:500]
-    )
-
-
 class ChannelService:
     def __init__(
         self,
@@ -51,12 +41,14 @@ class ChannelService:
         scout: IdeaScoutAgent,
         prompt_engineer: PromptEngineerAgent,
         ai: AIService | None = None,
+        images: PostImageService | None = None,
     ) -> None:
         self.settings = settings
         self._sf = session_factory
         self.scout = scout
         self.prompt_engineer = prompt_engineer
-        self.ai = ai  # rasm yaratish uchun (POST_IMAGES yoqilganda)
+        # Post rasmlari (POST_IMAGES yoqilganda): Pexels fotosi yoki AI rasm.
+        self.images = images or PostImageService(settings, ai, PexelsClient(settings))
         self._publishing: set[int] = set()
 
     async def research_and_create_drafts(self) -> list[ChannelIdea]:
@@ -158,18 +150,20 @@ class ChannelService:
 
     async def _prepare_image(self, details: str, web_used: bool) -> tuple[GeneratedImage | None, str]:
         """Yoqilgan bo'lsa, g'oya uchun rasm va qisqa matn tayyorlaydi. Xatoda — (None, "")."""
-        if not self.settings.post_images or self.ai is None:
+        if not self.settings.post_images:
             return None, ""
         try:
             idea = ScoutIdea.model_validate_json(details)
         except ValueError:
             return None, ""
         try:
-            image = await self.ai.generate_image(image_prompt(idea.title, idea.one_liner))
-        except Exception as exc:  # noqa: BLE001 - rasm bo'lmasa, matnli post joylanadi
-            logger.warning("idea_image_failed error=%s", type(exc).__name__)
+            image = await self.images.make(idea.title, idea.one_liner, idea.image_query)
+        except ImageUnavailableError:
+            return None, ""  # sabablar loglangan; post matn ko'rinishida joylanadi
+        except Exception:  # noqa: BLE001 - kutilmagan xato ham postni to'xtatmasin
+            logger.exception("idea_image_unexpected")
             return None, ""
-        return image, render_channel_caption(idea, web_used)
+        return image, render_channel_caption(idea, web_used, credit=image.credit)
 
     async def reject(self, idea_id: int) -> bool:
         async with self._sf() as session:

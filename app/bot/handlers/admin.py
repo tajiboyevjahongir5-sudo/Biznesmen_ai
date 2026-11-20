@@ -43,9 +43,9 @@ from app.core.text import e, format_money, heading, quote
 from app.database import repository as repo
 from app.database.models import ChannelIdea, IdeaStatus
 from app.services.ai_service import AIServiceError
-from app.services.channel_service import image_prompt
 from app.services.gemini_native import GeminiNativeError, image_error_hint
 from app.services.payment_parser import parse_payment
+from app.services.post_images import ImageUnavailableError
 from app.services.runtime_settings import SettingError, mask_card
 
 logger = logging.getLogger(__name__)
@@ -303,7 +303,7 @@ _SETTINGS_COMMANDS = (
     "/followup_days 7 — tahlildan keyin kuzatuv (0 — o'chiq)\n"
     "/bank_bot HUMOcardbot — bank boti (userbot uchun)\n"
     "/websearch on|off — internet qidiruvi\n"
-    "/post_images on|off — kanal postlariga AI rasm\n"
+    "/post_images — kanal postlariga rasm (Pexels yoki AI)\n"
     "/channel_title Nomi — kanal nomi (reklamada)\n"
     "/daily_ideas 2 — kuniga nechta g'oya\n"
     "/research_time 09:00 — kunlik izlanish vaqti\n"
@@ -346,7 +346,7 @@ async def settings_cmd(message: Message, ctx: AppContext) -> None:
         "💡 <b>G'oyalar va AI</b>",
         f"• Kunlik g'oyalar: {s.daily_ideas_count} ta, soat {s.daily_research_time} ({s.timezone})",
         f"• Avtomatik joylash: {on(s.ideas_auto_publish)}",
-        f"• Post rasmlari: {on(s.post_images)}",
+        f"• Post rasmlari: {on(s.post_images)} · {SOURCE_NAMES.get(s.post_image_source, '')}",
         f"• Internet qidiruvi: {on(s.web_search_enabled)}",
         f"• Kuzatuv: {follow}",
         "",
@@ -658,35 +658,76 @@ async def websearch_cmd(message: Message, command: CommandObject, ctx: AppContex
 
 
 POST_IMAGES_HELP = (
-    "/post_images on — kanal postlariga AI rasm qo'shish\n"
-    "/post_images off — o'chirish (faqat matnli post)\n"
-    "/post_images test — bitta sinov rasmini shu yerga yuborish\n"
-    "/post_images model NOM — rasm modelini tanlash (auto — avtomatik)\n\n"
-    "<i>⚠️ Gemini rasm modellari odatda pullik (billing yoqilgan kalit kerak). Har bir post — "
-    "bitta rasm so'rovi. Narxni Google AI Studio'da tekshiring. Rasm yaratilmasa, post "
-    "odatdagidek matn ko'rinishida joylanadi.</i>"
+    "📋 <b>Buyruqlar</b>\n"
+    "/post_images on · off — rasmlarni yoqish / o'chirish\n"
+    "/post_images stock — 📷 Pexels bepul fotolari (tavsiya)\n"
+    "/post_images ai — 🎨 Gemini AI rasm (odatda pullik)\n"
+    "/post_images auto — avval Pexels, topilmasa AI\n"
+    "/post_images test — sinov rasmini shu yerga yuborish\n"
+    "/post_images model NOM|auto — AI rasm modeli\n\n"
+    "📷 <b>Pexels kaliti (bepul)</b>\n"
+    "1️⃣ pexels.com/api da ro'yxatdan o'ting va «Your API Key» ni oling\n"
+    "2️⃣ Railway → Variables → <code>PEXELS_API_KEY</code> ga qo'ying (botga yozmang!)\n"
+    "3️⃣ /post_images test bilan tekshiring\n\n"
+    "<i>Pexels fotolari bepul, tijoriy foydalanish mumkin; post ostida fotograf va Pexels "
+    "ko'rsatiladi. Rasm topilmasa, post matn ko'rinishida chiqadi.</i>"
+)
+SOURCE_NAMES = {"stock": "📷 Pexels fotolari", "ai": "🎨 Gemini AI rasm", "auto": "📷 Pexels → 🎨 AI"}
+SAMPLE_IDEA = (
+    "Ofislarga sog'lom nonushta yetkazib berish",
+    "Ertalab ofis xodimlariga issiq va foydali nonushta",
+    "healthy breakfast delivery",
+)
+NO_PEXELS_KEY = (
+    "⚠️ <code>PEXELS_API_KEY</code> hali kiritilmagan. Uni pexels.com/api dan bepul oling va "
+    "Railway → Variables ga qo'ying (botga yozmang). Kalitsiz postlar matn ko'rinishida chiqadi."
 )
 
 
-def _image_failure_text(exc: AIServiceError, ctx: AppContext) -> str:
+def _ai_failure_lines(exc: Exception, ctx: AppContext) -> list[str]:
     cause = exc.__cause__
-    lines = [f"❌ <b>Rasm yaratilmadi</b> · <code>{type(exc).__name__}</code>"]
+    lines = [f"🎨 <b>AI rasm</b>: <code>{type(exc).__name__}</code>"]
     if isinstance(cause, GeminiNativeError):
         if cause.tried:
             models = ", ".join(f"<code>{e(m)}</code>" for m in cause.tried)
             lines.append(f"🧪 Sinab ko'rilgan modellar: {models}")
         if cause.detail:
             detail = redact(cause.detail, ctx.settings.secret_values())[:400]
-            lines += ["", f"📨 Google javobi ({cause.status}):", quote(e(detail), expandable=True)]
-        lines += ["", f"💡 {image_error_hint(cause)}"]
+            lines += [f"📨 Google javobi ({cause.status}):", quote(e(detail), expandable=True)]
+        lines.append(f"💡 {image_error_hint(cause)}")
     else:
-        lines += ["", "💡 Gemini kaliti sozlanganini va kunlik AI limiti tugamaganini tekshiring (/aitest)."]
+        lines.append("💡 Gemini kaliti sozlanganini va kunlik AI limiti tugamaganini tekshiring (/aitest).")
+    return lines
+
+
+def _image_unavailable_text(exc: ImageUnavailableError, ctx: AppContext) -> str:
+    lines = ["❌ <b>Rasm olinmadi</b>"]
+    for source, err in exc.errors:
+        lines.append("")
+        if source == "stock":
+            lines.append(f"📷 <b>Pexels</b>: {e(str(err))}")
+            if not ctx.settings.pexels_api_key.get_secret_value():
+                lines.append(NO_PEXELS_KEY)
+        else:
+            lines += _ai_failure_lines(err, ctx)
     if ctx.settings.post_images:
-        lines += [
-            "",
-            "<i>Muammo hal bo'lmaguncha postlar matn ko'rinishida chiqadi. O'chirish: /post_images off</i>",
-        ]
+        lines += ["", "<i>Muammo hal bo'lmaguncha postlar matn ko'rinishida chiqadi.</i>"]
     return "\n".join(lines)
+
+
+def _post_images_status(s) -> str:
+    key = "🟢 kiritilgan" if s.pexels_api_key.get_secret_value() else "⚪ kiritilmagan"
+    return "\n".join(
+        [
+            heading("🖼", "KANAL RASMLARI"),
+            f"Holat: {_dot(s.post_images)} <b>{'yoqilgan' if s.post_images else 'o`chiq'}</b>",
+            f"Manba: {SOURCE_NAMES.get(s.post_image_source, s.post_image_source)}",
+            f"Pexels kaliti: {key}",
+            f"AI rasm modeli: {e(s.gemini_image_model or 'avtomatik')}",
+            "",
+            POST_IMAGES_HELP,
+        ]
+    )
 
 
 @router.message(Command("post_images"))
@@ -694,11 +735,11 @@ async def post_images_cmd(message: Message, command: CommandObject, ctx: AppCont
     s = ctx.settings
     action, _, rest = _arg(command).partition(" ")
     action = action.lower()
-    if action == "auto":  # "/post_images auto" — "/post_images model auto" bilan bir xil
-        action, rest = "model", "auto"
     if action in {"on", "off"}:
-        if action == "on" and s.ai_provider != "gemini":
-            await message.answer("Rasm faqat AI_PROVIDER=gemini bilan ishlaydi.")
+        if action == "on" and s.post_image_source == "ai" and s.ai_provider != "gemini":
+            await message.answer(
+                "⚠️ AI rasm faqat AI_PROVIDER=gemini bilan ishlaydi. /post_images stock ni tanlang."
+            )
             return
         await _set(
             message,
@@ -707,6 +748,13 @@ async def post_images_cmd(message: Message, command: CommandObject, ctx: AppCont
             "true" if action == "on" else "false",
             "🖼 Kanal postlariga rasm qo'shiladi." if action == "on" else "Kanal rasmlari o'chirildi.",
         )
+        if action == "on" and s.post_image_source != "ai" and not s.pexels_api_key.get_secret_value():
+            await message.answer(NO_PEXELS_KEY)
+        return
+    if action in SOURCE_NAMES:
+        await _set(message, ctx, "post_image_source", action, f"Rasm manbasi: {SOURCE_NAMES[action]}")
+        if action != "ai" and not s.pexels_api_key.get_secret_value():
+            await message.answer(NO_PEXELS_KEY)
         return
     if action == "model":
         name = rest.strip()
@@ -716,26 +764,22 @@ async def post_images_cmd(message: Message, command: CommandObject, ctx: AppCont
             )
             return
         value = "" if name.lower() == "auto" else name
-        await _set(message, ctx, "gemini_image_model", value, f"Rasm modeli: {e(name)}")
+        await _set(message, ctx, "gemini_image_model", value, f"AI rasm modeli: {e(name)}")
         return
     if action == "test":
-        await message.answer("🎨 Sinov rasmi tayyorlanyapti (10–40 soniya)...")
-        prompt = image_prompt(
-            "Mahalla uchun sog'lom nonushta yetkazib berish", "Ertalab ofis xodimlariga issiq nonushta"
-        )
+        await message.answer(f"🔎 Sinov rasmi tayyorlanyapti ({SOURCE_NAMES[s.post_image_source]})...")
         try:
-            image = await ctx.ai.generate_image(prompt)
-        except AIServiceError as exc:
-            await message.answer(_image_failure_text(exc, ctx))
+            image = await ctx.channel.images.make(*SAMPLE_IDEA)
+        except ImageUnavailableError as exc:
+            await message.answer(_image_unavailable_text(exc, ctx))
             return
-        await message.answer_photo(
-            BufferedInputFile(image.data, image.filename),
-            caption=f"✅ Rasm tayyor. Model: <code>{e(image.model)}</code>",
-        )
+        source = "📷 Pexels" if image.model == "pexels" else f"🎨 <code>{e(image.model)}</code>"
+        caption = f"✅ <b>Rasm tayyor</b> · {source}"
+        if image.credit:
+            caption += f"\n{image.credit}"
+        await message.answer_photo(BufferedInputFile(image.data, image.filename), caption=caption)
         return
-    state = "yoqilgan" if s.post_images else "o'chiq"
-    model = s.gemini_image_model or "avtomatik"
-    await message.answer(f"🖼 Kanal rasmlari: <b>{state}</b> · model: {e(model)}\n\n{POST_IMAGES_HELP}")
+    await message.answer(_post_images_status(s))
 
 
 @router.message(Command("followup_days"))

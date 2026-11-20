@@ -295,8 +295,8 @@ def render_channel_post(idea: ScoutIdea, web_used: bool) -> str:
     return render_channel_caption(idea, web_used)
 
 
-def render_channel_caption(idea: ScoutIdea, web_used: bool) -> str:
-    """Rasmli post uchun qisqa matn (Telegram limiti 1024 belgi)."""
+def render_channel_caption(idea: ScoutIdea, web_used: bool, credit: str = "") -> str:
+    """Rasmli post uchun qisqa matn (Telegram limiti 1024 belgi). `credit` — tayyor HTML."""
     demand = _GOOD_HIGH.get(idea.demand_level, "⚪")
     competition = _GOOD_LOW.get(idea.competition_level, "⚪")
     for budget in (260, 190, 130, 80):
@@ -314,7 +314,10 @@ def render_channel_caption(idea: ScoutIdea, web_used: bool) -> str:
         if not web_used:
             lines.append("<i>Raqamlar taxminiy.</i>")
         lines += ["", "👇 <b>To'liq SUPER PROMPT</b> — pastdagi tugmada"]
+        if credit:
+            lines.append(credit)
         text = "\n".join(lines)
         if len(text) <= CAPTION_LIMIT:
             return text
-    return f"💡 <b>{e(_clip(idea.title, 110))}</b>\n\n👇 To'liq SUPER PROMPT — pastdagi tugmada"
+    tail = f"\n{credit}" if credit else ""
+    return f"💡 <b>{e(_clip(idea.title, 110))}</b>\n\n👇 To'liq SUPER PROMPT — pastdagi tugmada{tail}"

@@ -150,11 +150,18 @@ Internet qidiruvi: admin `/websearch on` yuborsa, tahlil va kunlik g'oyalarda Ge
 qidiruvidan foydalaniladi (manbalar — Google qaytargan haqiqiy havolalar). Bepul tarifda kunlik
 cheklangan, billing yoqilgan bo'lsa limitdan oshgani pullik.
 
-Kanal postlariga AI rasm: admin `/post_images on` yuborsa, har bir g'oya kanalga rasm bilan
-joylanadi (Gemini rasm modeli, rasmda yozuv bo'lmaydi; post matni rasm ostida qisqaroq ko'rinishda).
-Standart holatda o'chiq, chunki Gemini rasm modellari odatda **pullik** (billing yoqilgan kalit kerak).
-`/post_images test` — bitta sinov rasmi, `/post_images model nom|auto` — modelni tanlash,
-`/aitest` — kalitga ochiq rasm modellari ro'yxati. Rasm yaratilmasa, post matn ko'rinishida joylanadi.
+Kanal postlariga rasm: admin `/post_images on` yuborsa, har bir g'oya kanalga rasm bilan
+joylanadi (post matni rasm ostida qisqaroq ko'rinishda). Manba (`/post_images stock|ai|auto`):
+
+- `stock` (standart) — **Pexels** bepul fotolari. Litsenziya tijoriy foydalanishga ruxsat beradi,
+  post ostida fotograf va Pexels ko'rsatiladi. Bepul kalit: https://www.pexels.com/api/ →
+  Railway Variables dagi `PEXELS_API_KEY` (kalitni botga yozmang). Qidiruv so'zini g'oyadan AI tuzadi.
+- `ai` — Gemini rasm modeli (rasmda yozuv bo'lmaydi). Odatda **pullik**: billing yoqilgan kalit kerak.
+- `auto` — avval Pexels, topilmasa AI.
+
+Internetdagi tasodifiy rasmlar (Google va h.k.) mualliflik huquqi bilan himoyalangani uchun
+ishlatilmaydi. `/post_images test` — sinov rasmi (xato bo'lsa, sababi ko'rsatiladi),
+`/post_images model nom|auto` — AI rasm modeli. Rasm olinmasa, post matn ko'rinishida joylanadi.
 
 AI band bo'lsa, xabar navbatga olinadi va bot 1, 3 va 7 daqiqadan keyin qayta urinib,
 javobni o'zi yuboradi. Navbat bazada saqlanadi — bot qayta ishga tushsa ham yo'qolmaydi;
@@ -165,7 +172,7 @@ Admin: `/admin` (statistika va AI xarajati), `/research` (izlanishni hozir boshl
 `/unblock tg_id`, `/promo`, `/settings` (kanal, karta, narx, kunlik g'oyalar va boshqalar),
 `/stats` (foydalanuvchilar, faollik, konversiya, tushum, obunachilar),
 `/broadcast` (xabarga reply qilib — hammaga yuborish, tasdiqlash bilan),
-`/websearch on|off`, `/post_images on|off|test`, `/followup_days 7`, `/parsetest` (bank xabariga reply qilib — parser qanday o'qishini ko'rish),
+`/websearch on|off`, `/post_images on|off|stock|ai|auto|test`, `/followup_days 7`, `/parsetest` (bank xabariga reply qilib — parser qanday o'qishini ko'rish),
 `/sub_days 30` (oylik obuna; muddat tugashidan 3 kun oldin eslatma, tugagach kanaldan
 chiqariladi; `0` — umrbod kirish).
 

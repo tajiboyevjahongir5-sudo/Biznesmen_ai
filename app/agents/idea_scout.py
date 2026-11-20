@@ -27,6 +27,11 @@ class ScoutIdea(BaseModel):
     first_steps: list[str]
     risks: list[str]
     evidence: list[Claim]
+    image_query: str = Field(
+        default="",
+        max_length=100,
+        description="Stok-foto qidiruvi uchun 2-4 ta INGLIZCHA so'z, masalan: healthy breakfast delivery",
+    )
 
 
 class ScoutReport(BaseModel):

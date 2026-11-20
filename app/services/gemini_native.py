@@ -45,7 +45,8 @@ class NativeResult:
 class GeneratedImage:
     data: bytes
     mime: str
-    model: str
+    model: str  # AI modeli yoki "pexels"
+    credit: str = ""  # tayyor HTML: muallif va manba (stok foto uchun)
 
     @property
     def filename(self) -> str:

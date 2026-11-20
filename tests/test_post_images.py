@@ -14,8 +14,9 @@ from app.config import Settings
 from app.core.text import CAPTION_LIMIT, render_channel_caption, render_channel_post
 from app.database.models import ChannelIdea, IdeaStatus
 from app.services.ai_service import AIServiceError
-from app.services.channel_service import ChannelService, image_prompt
+from app.services.channel_service import ChannelService
 from app.services.gemini_native import GeminiNative, GeminiNativeError, GeneratedImage
+from app.services.post_images import image_prompt
 
 KEY = "AIzaFakeGeminiKeyForTests_0123456789abcd"
 PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 64
@@ -183,7 +184,8 @@ async def test_publish_with_image(session_factory):
     idea_id = await _draft(session_factory)
     ai = MagicMock()
     ai.generate_image = AsyncMock(return_value=GeneratedImage(PNG, "image/png", "m"))
-    svc = ChannelService(_settings(POST_IMAGES="true"), session_factory, MagicMock(), MagicMock(), ai=ai)
+    settings = _settings(POST_IMAGES="true", POST_IMAGE_SOURCE="ai")
+    svc = ChannelService(settings, session_factory, MagicMock(), MagicMock(), ai=ai)
     bot = _bot()
     idea = await svc.publish(bot, idea_id, "TestBot")
     assert idea.status == IdeaStatus.PUBLISHED and idea.channel_message_id == 77
@@ -199,7 +201,8 @@ async def test_publish_falls_back_to_text_when_image_fails(session_factory):
     idea_id = await _draft(session_factory)
     ai = MagicMock()
     ai.generate_image = AsyncMock(side_effect=AIServiceError())
-    svc = ChannelService(_settings(POST_IMAGES="true"), session_factory, MagicMock(), MagicMock(), ai=ai)
+    settings = _settings(POST_IMAGES="true", POST_IMAGE_SOURCE="ai")
+    svc = ChannelService(settings, session_factory, MagicMock(), MagicMock(), ai=ai)
     bot = _bot()
     idea = await svc.publish(bot, idea_id, "TestBot")
     assert idea.channel_message_id == 78
@@ -258,20 +261,22 @@ async def test_all_image_models_fail_with_clear_hint():
 
 
 async def test_admin_failure_text_shows_google_reason_without_key():
-    from app.bot.handlers.admin import _image_failure_text
+    from app.bot.handlers.admin import _image_unavailable_text
     from app.services.ai_service import AIRateLimitedError
+    from app.services.post_images import ImageUnavailableError
 
     cause = GeminiNativeError(429, FREE_TIER_429["error"]["message"] + " key=" + KEY)
     cause.tried = ["gemini-2.5-flash-image"]
     try:
         raise AIRateLimitedError() from cause
     except AIRateLimitedError as exc:
-        text = _image_failure_text(exc, SimpleNamespace(settings=_settings(POST_IMAGES="true")))
+        err = ImageUnavailableError([("ai", exc)])
+        text = _image_unavailable_text(err, SimpleNamespace(settings=_settings(POST_IMAGES="true")))
     assert "limit: 0" in text and "billing" in text and "gemini-2.5-flash-image" in text
     assert KEY not in text
 
 
-async def test_post_images_auto_shortcut_sets_auto_model():
+async def test_post_images_auto_shortcut_sets_source():
     from app.bot.handlers.admin import post_images_cmd
 
     ctx = SimpleNamespace(
@@ -282,4 +287,4 @@ async def test_post_images_auto_shortcut_sets_auto_model():
     message = MagicMock()
     message.answer = AsyncMock()
     await post_images_cmd(message, SimpleNamespace(args="auto"), ctx)
-    ctx.runtime.set.assert_awaited_once_with("gemini_image_model", "")
+    ctx.runtime.set.assert_awaited_once_with("post_image_source", "auto")

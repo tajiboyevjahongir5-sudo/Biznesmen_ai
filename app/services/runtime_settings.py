@@ -41,6 +41,7 @@ EDITABLE_KEYS: frozenset[str] = frozenset(
         "bank_bot_username",
         "post_images",
         "gemini_image_model",
+        "post_image_source",
     }
 )
 
