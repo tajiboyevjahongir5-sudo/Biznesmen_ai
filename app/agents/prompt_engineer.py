@@ -13,8 +13,20 @@ AGENT_NAME = "prompt_engineer"
 
 class SuperPrompt(BaseModel):
     title: str = Field(max_length=200)
-    prompt: str = Field(min_length=200, max_length=12000)
+    prompt: str = Field(min_length=200, max_length=20000)
     how_to_use: str = Field(max_length=600)
+    software_product: bool = Field(
+        default=False,
+        description="true — mahsulotning o'zi dastur bo'lsa: Telegram bot, Web App, mobil ilova, "
+        "veb-sayt, onlayn do'kon, SaaS, platforma, marketpleys. Oddiy oflayn biznes "
+        "(kafe, do'kon, xizmat) faqat Instagram/Telegram kanal orqali sotsa — false.",
+    )
+    product_type: str = Field(
+        default="",
+        max_length=120,
+        description="software_product true bo'lsa — mahsulot turi va platformasi, masalan: "
+        "'Telegram Web App + bot', 'mobil ilova (Android/iOS)', 'veb-sayt'. Aks holda bo'sh.",
+    )
 
 
 class PromptEngineerAgent:
@@ -36,5 +48,6 @@ class PromptEngineerAgent:
             instructions=self._prompt,
             user_input=user_input,
             schema=SuperPrompt,
-            max_output_tokens=8000,
+            max_output_tokens=12000,
+            timeout=150.0,
         )

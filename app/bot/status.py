@@ -30,6 +30,8 @@ ANALYSIS_STAGES: tuple[tuple[str, str], ...] = (
     ("prompt", "SUPER PROMPT"),
     ("report", "Hisobot"),
 )
+# Faqat kerak bo'lganda qo'shiladigan bosqichlar ("Hisobot" dan oldin).
+EXTRA_STAGES: dict[str, str] = {"tech": "TEXNIK PROMPT (kod, xavfsizlik, UI/UX)"}
 TICK_SECONDS = 5.0  # tahlil xabaridagi vaqt shu oraliqda yangilanadi
 MAX_TICK_SECONDS = 30.0
 
@@ -97,7 +99,8 @@ class AnalysisProgress:
             icon = "✅" if done or i < self.current else (running if i == self.current else "▫️")
             lines.append(f"{icon} {label}")
         if not done:
-            lines += ["", f"⏱ {self._clock()} · <i>odatda 1–3 daqiqa</i>"]
+            usual = "3–6" if "tech" in self.keys else "1–3"
+            lines += ["", f"⏱ {self._clock()} · <i>odatda {usual} daqiqa</i>"]
         return "\n".join(lines)
 
     async def start(self) -> None:
@@ -108,6 +111,10 @@ class AnalysisProgress:
 
     async def stage(self, key: str) -> None:
         """Orkestrator chaqiradi: `key` bosqichi boshlandi (oldingilari tugadi)."""
+        if key not in self.keys and key in EXTRA_STAGES:
+            pos = self.keys.index("report") if "report" in self.keys else len(self.keys)
+            self.keys.insert(pos, key)
+            self.labels.insert(pos, EXTRA_STAGES[key])
         if key in self.keys and self.keys.index(key) > self.current:
             self.current = self.keys.index(key)
             await self._edit()

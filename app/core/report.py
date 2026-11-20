@@ -116,8 +116,17 @@ def build_report_html(
     finance: FinanceModel | None,
     prompt_title: str,
     prompt_text: str,
+    tech_prompt_text: str = "",
 ) -> str:
     a = analysis
+    tech = (
+        "<section><h2>🛠 TEXNIK PROMPT (dasturchi AI uchun)</h2>\n"
+        "<p class='muted'>Kod tuzilishi, xavfsizlik, UI/UX dizayn, animatsiya va deploy bo'yicha "
+        "to'liq topshiriq. Claude Code, Cursor, ChatGPT yoki Gemini ga bering.</p>\n"
+        f"<pre>{_e(tech_prompt_text)}</pre></section>\n"
+        if tech_prompt_text
+        else ""
+    )
     date = datetime.now(UTC).strftime("%d.%m.%Y")
     competitors = "".join(
         f"<li><b>{_e(c.name)}</b> <span class='tag'>{KIND[c.kind]}</span>{_e(c.note)}</li>"
@@ -180,6 +189,7 @@ def build_report_html(
 <p class="muted">Matnni to'liq nusxa olib, istalgan AI (ChatGPT, Claude, Gemini) ga yuboring.</p>
 <pre>{_e(prompt_text)}</pre></section>
 
+{tech}
 {f"<section><h2>🔗 Internet manbalari</h2><ul>{src}</ul></section>" if src else ""}
 
 <p class="muted" style="text-align:center;margin-top:24px">Bu hisobot maslahat xarakterida.

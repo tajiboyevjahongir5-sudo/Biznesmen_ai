@@ -304,6 +304,7 @@ _SETTINGS_COMMANDS = (
     "/bank_bot HUMOcardbot — bank boti (userbot uchun)\n"
     "/websearch on|off — internet qidiruvi\n"
     "/post_images — kanal postlariga rasm (Pexels yoki AI)\n"
+    "/tech_prompt on|off — dasturiy g'oyalarga TEXNIK PROMPT\n"
     "/channel_title Nomi — kanal nomi (reklamada)\n"
     "/daily_ideas 2 — kuniga nechta g'oya\n"
     "/research_time 09:00 — kunlik izlanish vaqti\n"
@@ -348,6 +349,7 @@ async def settings_cmd(message: Message, ctx: AppContext) -> None:
         f"• Avtomatik joylash: {on(s.ideas_auto_publish)}",
         f"• Post rasmlari: {on(s.post_images)} · {SOURCE_NAMES.get(s.post_image_source, '')}",
         f"• Internet qidiruvi: {on(s.web_search_enabled)}",
+        f"• Texnik prompt (bot/ilova/sayt): {on(s.tech_prompt)}",
         f"• Kuzatuv: {follow}",
         "",
         SETTINGS_HELP,
@@ -449,6 +451,28 @@ async def autopublish_cmd(message: Message, command: CommandObject, ctx: AppCont
         "ideas_auto_publish",
         "true" if value == "on" else "false",
         f"Avtomatik joylash: {value}.",
+    )
+
+
+@router.message(Command("tech_prompt"))
+async def tech_prompt_cmd(message: Message, command: CommandObject, ctx: AppContext) -> None:
+    value = _arg(command).lower()
+    if value not in {"on", "off"}:
+        state = "yoqilgan" if ctx.settings.tech_prompt else "o'chiq"
+        await message.answer(
+            f"🛠 <b>TEXNIK PROMPT</b>: {state}\n\n"
+            "G'oya dasturiy mahsulot (bot, ilova, sayt, platforma) bo'lsa, SUPER PROMPT dan "
+            "tashqari dasturchi AI uchun kod, xavfsizlik, UI/UX, animatsiya va deploy bo'yicha "
+            "alohida prompt yoziladi. Har tahlilga bitta qo'shimcha AI so'rovi ketadi.\n\n"
+            "ℹ️ Masalan: /tech_prompt on yoki /tech_prompt off"
+        )
+        return
+    await _set(
+        message,
+        ctx,
+        "tech_prompt",
+        "true" if value == "on" else "false",
+        f"Texnik prompt: {value}.",
     )
 
 

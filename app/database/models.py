@@ -109,6 +109,8 @@ class PromptVersion(Base):
         ForeignKey("business_projects.id", ondelete="CASCADE"), index=True
     )
     prompt_text: Mapped[str] = mapped_column(Text)
+    # Dasturiy mahsulotlar uchun texnik prompt (kod, xavfsizlik, UI/UX). Boshqalarda bo'sh.
+    tech_prompt_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 

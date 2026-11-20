@@ -20,6 +20,7 @@ from app.agents.coach import CoachAgent
 from app.agents.idea_scout import IdeaScoutAgent
 from app.agents.interviewer import InterviewerAgent
 from app.agents.prompt_engineer import PromptEngineerAgent
+from app.agents.tech_architect import TechArchitectAgent
 from app.bot.context import AppContext
 from app.bot.handlers import admin, errors, payment, user
 from app.bot.jobs import job_worker_loop
@@ -72,6 +73,8 @@ def build_context(settings: Settings, session_factory, runtime: RuntimeSettings)
             settings.max_interview_questions,
             coach=CoachAgent(ai),
             followup_days=lambda: settings.followup_days,
+            tech_architect=TechArchitectAgent(ai),
+            tech_enabled=lambda: settings.tech_prompt,
         ),
         payments=PaymentService(
             session_factory, settings.channel_price_uzs, settings.payment_timeout_seconds

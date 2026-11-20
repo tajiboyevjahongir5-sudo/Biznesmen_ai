@@ -42,6 +42,7 @@ EDITABLE_KEYS: frozenset[str] = frozenset(
         "post_images",
         "gemini_image_model",
         "post_image_source",
+        "tech_prompt",
     }
 )
 

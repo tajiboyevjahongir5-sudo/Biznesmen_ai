@@ -14,14 +14,15 @@ from aiogram.utils.chat_action import ChatActionSender
 
 from app.agents.analyst import MarketAnalysis
 from app.bot.context import AppContext
-from app.bot.helpers import is_channel_member, maybe_send_promo, send_parts
+from app.bot.helpers import is_channel_member, maybe_send_promo, send_documents, send_parts
 from app.bot.jobs import TRANSIENT_AI_ERRORS, Job, enqueue, has_pending, react, run_job, send_report
 from app.bot.status import LISTENING_TEXT, drop_status, replace_status, send_status
 from app.core.finance import build_model
 from app.core.logging import user_ref
+from app.core.orchestrator import tech_prompt_document
 from app.core.report import build_report_html
 from app.core.security import contains_sensitive_data, detect_prompt_injection, sanitize_user_text
-from app.core.text import SEP, e, render_prompt
+from app.core.text import SEP, e, render_prompt, render_tech_prompt
 from app.database import repository as repo
 from app.services.ai_service import AIServiceError
 from app.services.channel_service import DEEP_LINK_PREFIX
@@ -37,7 +38,9 @@ HELP_TEXT = (
     "1️⃣ G'oyangizni oddiy so'zlar bilan yozing yoki 🎙 aytib yuboring\n"
     "2️⃣ Men birma-bir aniqlashtiruvchi savollar beraman\n"
     "3️⃣ Talab, raqobat, xavflar va moliyaviy modelni tahlil qilaman\n"
-    "4️⃣ Oxirida istalgan AI da ishlatish uchun tayyor 🤖 <b>SUPER PROMPT</b> beraman\n\n"
+    "4️⃣ Oxirida istalgan AI da ishlatish uchun tayyor 🤖 <b>SUPER PROMPT</b> beraman\n"
+    "5️⃣ G'oya bot, ilova yoki sayt bo'lsa — dasturchi AI uchun 🛠 <b>TEXNIK PROMPT</b> ham "
+    "(kod, xavfsizlik, UI/UX, animatsiya)\n\n"
     "📋 <b>Buyruqlar</b>\n"
     "🆕 /new — yangi g'oya\n"
     "⏹ /cancel — joriy suhbatni to'xtatish\n"
@@ -169,10 +172,15 @@ async def prompt_cmd(
         return
     async with ctx.session_factory() as session:
         text = await repo.latest_prompt(session, db_user_id, project_id)
+        tech = await repo.latest_tech_prompt(session, db_user_id, project_id)
     if not text:
         await message.answer("🔍 Bu raqamli tayyor loyiha topilmadi. Ro'yxat — /history")
         return
-    await send_parts(bot, message.chat.id, render_prompt(f"Loyiha #{project_id}", text, ""))
+    title = f"Loyiha #{project_id}"
+    await send_parts(bot, message.chat.id, render_prompt(title, text, "", tech_follows=bool(tech)))
+    if tech:
+        await send_parts(bot, message.chat.id, render_tech_prompt(title, tech, ""))
+        await send_documents(bot, message.chat.id, [tech_prompt_document(project_id, title, tech)])
 
 
 @router.message(Command("report"))
@@ -190,6 +198,7 @@ async def report_cmd(
         project = await repo.get_project(session, db_user_id, project_id)
         analysis_json = await repo.latest_analysis(session, db_user_id, project_id)
         prompt = await repo.latest_prompt(session, db_user_id, project_id)
+        tech = await repo.latest_tech_prompt(session, db_user_id, project_id)
     if project is None or not analysis_json or not prompt:
         await message.answer("🔍 Bu raqamli tayyor loyiha topilmadi. Ro'yxat — /history")
         return
@@ -208,6 +217,7 @@ async def report_cmd(
         finance=finance if finance.usable else None,
         prompt_title=project.title or f"Loyiha #{project_id}",
         prompt_text=prompt,
+        tech_prompt_text=tech or "",
     )
     await send_report(bot, message.chat.id, project_id, html_doc)
 

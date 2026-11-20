@@ -18,10 +18,18 @@ from app.agents.analyst import AnalystAgent, MarketAnalysis
 from app.agents.coach import CoachAgent
 from app.agents.interviewer import InterviewerAgent, Turn
 from app.agents.prompt_engineer import PromptEngineerAgent
+from app.agents.tech_architect import TechArchitectAgent
 from app.core.finance import build_model, finance_summary_for_ai, render_finance
 from app.core.logging import user_ref
 from app.core.report import build_report_html
-from app.core.text import format_reply, render_analysis, render_prompt, split_message
+from app.core.text import (
+    format_reply,
+    render_analysis,
+    render_prompt,
+    render_tech_prompt,
+    split_message,
+    tech_prompt_filename,
+)
 from app.database import repository as repo
 from app.database.models import BusinessProject, Conversation, ProjectStatus
 
@@ -29,9 +37,29 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class OutputDocument:
+    """Xabarlardan keyin yuboriladigan fayl (masalan, uzun texnik prompt .md ko'rinishida)."""
+
+    filename: str
+    data: bytes
+    caption: str = ""
+
+
+@dataclass
 class AnalysisOutput:
     parts: list[str]  # Telegram xabarlari (HTML)
     report_html: str = ""  # yuklab olinadigan to'liq hisobot
+    documents: list[OutputDocument] = field(default_factory=list)
+
+
+def tech_prompt_document(project_id: int, title: str, prompt: str) -> OutputDocument:
+    """Texnik promptni .md fayl qiladi — AI dasturchi vositalariga to'g'ridan-to'g'ri yuklash qulay."""
+    text = f"# {title}\n\n{prompt.strip()}\n"
+    return OutputDocument(
+        filename=tech_prompt_filename(project_id),
+        data=text.encode("utf-8"),
+        caption="🛠 <b>TEXNIK PROMPT</b> — faylni Claude Code, Cursor, ChatGPT yoki Gemini ga bering.",
+    )
 
 
 @dataclass
@@ -56,12 +84,16 @@ class Orchestrator:
         max_questions: int,
         coach: CoachAgent | None = None,
         followup_days: Callable[[], int] = lambda: 0,
+        tech_architect: TechArchitectAgent | None = None,
+        tech_enabled: Callable[[], bool] = lambda: True,
     ) -> None:
         self._sf = session_factory
         self.interviewer = interviewer
         self.analyst = analyst
         self.prompt_engineer = prompt_engineer
         self.coach = coach
+        self.tech_architect = tech_architect
+        self._tech_enabled = tech_enabled
         self.min_q = min_questions
         self.max_q = max_questions
         self._followup_days = followup_days
@@ -169,7 +201,7 @@ class Orchestrator:
         """Tahlil va SUPER PROMPT. Xato bo'lsa loyiha suhbat holatiga qaytadi.
 
         `progress(bosqich)` — foydalanuvchiga jonli holat ko'rsatish uchun:
-        market → finance → prompt → report.
+        market → finance → prompt → (tech) → report.
         """
 
         async def notify(stage: str) -> None:
@@ -227,10 +259,27 @@ class Orchestrator:
                     await session.commit()
             raise
 
+        tech = None
+        if super_prompt.software_product and self.tech_architect is not None and self._tech_enabled():
+            await notify("tech")
+            try:
+                tech = await self.tech_architect.run(
+                    user_id=telegram_id,
+                    idea_data=idea_data,
+                    analysis_json=analysis_json,
+                    product_type=super_prompt.product_type,
+                )
+            except Exception:  # noqa: BLE001 - texnik prompt qo'shimcha: xatosi asosiy tahlilni buzmasin
+                logger.warning(
+                    "tech_prompt_failed %s project=%s", user_ref(telegram_id), project_id, exc_info=True
+                )
+
         async with self._sf() as session:
             project = await session.get(BusinessProject, project_id)
             await repo.save_analysis(session, project_id, "analyst", analysis_json)
-            await repo.save_prompt(session, project_id, super_prompt.prompt)
+            await repo.save_prompt(
+                session, project_id, super_prompt.prompt, tech.prompt if tech is not None else None
+            )
             project.status = ProjectStatus.DONE
             days = self._followup_days()
             project.followup_at = datetime.now(UTC) + timedelta(days=days) if days > 0 else None
@@ -241,7 +290,13 @@ class Orchestrator:
         out = render_analysis(analysis.data, analysis.sources, analysis.web_used)
         if finance.usable:
             out += split_message(render_finance(finance))
-        out += render_prompt(super_prompt.title, super_prompt.prompt, super_prompt.how_to_use)
+        out += render_prompt(
+            super_prompt.title, super_prompt.prompt, super_prompt.how_to_use, tech_follows=tech is not None
+        )
+        documents: list[OutputDocument] = []
+        if tech is not None:
+            out += render_tech_prompt(tech.title, tech.prompt, tech.how_to_use)
+            documents.append(tech_prompt_document(project_id, tech.title, tech.prompt))
         report = build_report_html(
             project_id=project_id,
             title=title,
@@ -251,8 +306,9 @@ class Orchestrator:
             finance=finance if finance.usable else None,
             prompt_title=super_prompt.title,
             prompt_text=super_prompt.prompt,
+            tech_prompt_text=tech.prompt if tech is not None else "",
         )
-        return AnalysisOutput(out, report)
+        return AnalysisOutput(out, report, documents)
 
     async def cancel_active(self, user_db_id: int) -> bool:
         async with self._sf() as session:

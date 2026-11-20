@@ -122,6 +122,8 @@ class Settings(BaseSettings):
     daily_research_time: str = Field(default="09:00", alias="DAILY_RESEARCH_TIME")
     timezone: str = Field(default="Asia/Tashkent", alias="TIMEZONE")
     ideas_auto_publish: bool = Field(default=False, alias="IDEAS_AUTO_PUBLISH")
+    # Dasturiy g'oyalar (bot, ilova, sayt) uchun qo'shimcha TEXNIK PROMPT (kod, xavfsizlik, UI/UX).
+    tech_prompt: bool = Field(default=True, alias="TECH_PROMPT")
     # Kanal postlariga AI rasm (Gemini rasm modeli). Pullik bo'lishi mumkin — standart o'chiq.
     post_images: bool = Field(default=False, alias="POST_IMAGES")
     # Bo'sh — kalitga ochiq rasm modellaridan avtomatik tanlanadi.

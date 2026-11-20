@@ -8,7 +8,12 @@ from datetime import UTC, datetime, timedelta
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError, TelegramRetryAfter
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions
+from aiogram.types import (
+    BufferedInputFile,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    LinkPreviewOptions,
+)
 
 from app.bot.context import AppContext
 from app.core.logging import user_ref
@@ -22,6 +27,17 @@ CB_PAY_CANCEL = "pay:cancel:"
 MEMBER_STATUSES = {"member", "administrator", "creator", "restricted"}
 PROMO_COOLDOWN = timedelta(hours=24)
 NO_PREVIEW = LinkPreviewOptions(is_disabled=True)
+
+
+async def send_documents(bot: Bot, chat_id: int, documents) -> None:
+    """Orkestrator tayyorlagan fayllarni (OutputDocument) yuboradi; xato bo'lsa jim o'tadi."""
+    for doc in documents:
+        try:
+            await bot.send_document(
+                chat_id, BufferedInputFile(doc.data, filename=doc.filename), caption=doc.caption or None
+            )
+        except TelegramAPIError:
+            logger.warning("document_send_failed file=%s", doc.filename)
 
 
 async def send_parts(bot: Bot, chat_id: int, parts: list[str], **kwargs) -> None:

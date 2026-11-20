@@ -144,6 +144,9 @@ class UsageTracker:
         return max(0, self.per_user_limit - self._user_requests.get(user_id, 0))
 
 
+MAX_OUTPUT_TOKENS_HARD = 65000  # Gemini/OpenAI modellarining yuqori chegarasi
+
+
 # ---------------------------------------------------------------------------
 # AI servis
 # ---------------------------------------------------------------------------
@@ -198,6 +201,7 @@ class AIService:
         user_input: str,
         schema: type[T],
         max_output_tokens: int | None = None,
+        timeout: float | None = None,
     ) -> T:
         """Bitta AI chaqiruvi: natija `schema` bo'yicha tekshirilgan obyekt.
 
@@ -212,6 +216,7 @@ class AIService:
             schema=schema,
             max_output_tokens=max_output_tokens,
             web_search=False,
+            timeout=timeout,
         )
         return result.data
 
@@ -225,6 +230,7 @@ class AIService:
         schema: type[T],
         max_output_tokens: int | None = None,
         web_search: bool = False,
+        timeout: float | None = None,
     ) -> AIResult[T]:
         """`structured` bilan bir xil, lekin internet qidiruvi va manbalarni qaytaradi.
 
@@ -233,10 +239,8 @@ class AIService:
         """
         client = self._get_client()
         self.usage.check_and_reserve(user_id)
-        limit = min(
-            max_output_tokens or self._settings.openai_max_output_tokens,
-            self._settings.openai_max_output_tokens,
-        )
+        # Agent o'z chegarasini bersa — o'shani (uzun prompt agentlari uchun), aks holda umumiy qiymat.
+        limit = min(max_output_tokens or self._settings.openai_max_output_tokens, MAX_OUTPUT_TOKENS_HARD)
         use_web = web_search and self.web_search_available
         gemini = self._settings.ai_provider == "gemini"
         extra: dict = {"tools": [{"type": "web_search"}]} if use_web and not gemini else {}
@@ -252,7 +256,7 @@ class AIService:
         started = time.perf_counter()
         try:
             if gemini:
-                response = await self._call_gemini(client, instructions, user_input, schema, limit)
+                response = await self._call_gemini(client, instructions, user_input, schema, limit, timeout)
             else:
                 response = await client.responses.parse(
                     model=self._settings.ai_model,
@@ -262,6 +266,7 @@ class AIService:
                     max_output_tokens=limit,
                     store=False,
                     **extra,
+                    **({"timeout": timeout} if timeout else {}),
                 )
         except openai.APITimeoutError as exc:
             self._log_failure(agent, user_id, exc)
@@ -447,10 +452,15 @@ class AIService:
         message = redact(message, self._settings.secret_values())[:300]
         return f"{type(exc).__name__} status={status}: {message}"
 
-    async def _gemini_create(self, client: openai.AsyncOpenAI, model: str, **kwargs):
+    async def _gemini_create(
+        self, client: openai.AsyncOpenAI, model: str, timeout: float | None = None, **kwargs
+    ):
         """Bitta modelga bitta so'rov. `reasoning_effort` qo'llab-quvvatlanmasa, usiz qayta yuboradi."""
         effort = self._settings.ai_reasoning_effort
-        one_shot = client.with_options(max_retries=0)
+        options: dict = {"max_retries": 0}
+        if timeout:
+            options["timeout"] = timeout  # uzun javoblar (texnik prompt) uchun ko'proq vaqt
+        one_shot = client.with_options(**options)
         if effort and not self._reasoning_unsupported:
             try:
                 return await one_shot.chat.completions.create(model=model, reasoning_effort=effort, **kwargs)
@@ -467,7 +477,13 @@ class AIService:
     _total_budget_seconds: float = 150.0
 
     async def _call_gemini(
-        self, client: openai.AsyncOpenAI, instructions: str, user_input: str, schema: type[T], limit: int
+        self,
+        client: openai.AsyncOpenAI,
+        instructions: str,
+        user_input: str,
+        schema: type[T],
+        limit: int,
+        timeout: float | None = None,
     ) -> SimpleNamespace:
         """Gemini (OpenAI-mos Chat Completions): JSON rejimi + Pydantic tekshiruvi.
 
@@ -486,7 +502,7 @@ class AIService:
             {"role": "user", "content": user_input},
         ]
         last_exc: BaseException | None = None
-        deadline = time.monotonic() + self._total_budget_seconds
+        deadline = time.monotonic() + max(self._total_budget_seconds, (timeout or 0) * 1.5)
         for round_no, delay in enumerate(self._retry_delays, start=1):
             if delay:
                 await asyncio.sleep(delay)
@@ -497,6 +513,7 @@ class AIService:
                     completion = await self._gemini_create(
                         client,
                         model,
+                        timeout=timeout,
                         messages=messages,
                         response_format={"type": "json_object"},
                         max_tokens=limit,

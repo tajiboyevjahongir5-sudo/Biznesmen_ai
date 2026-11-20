@@ -130,11 +130,18 @@ async def save_analysis(session: AsyncSession, project_id: int, agent: str, payl
     session.add(AgentAnalysis(project_id=project_id, agent_name=agent, analysis=payload))
 
 
-async def save_prompt(session: AsyncSession, project_id: int, prompt_text: str) -> PromptVersion:
+async def save_prompt(
+    session: AsyncSession, project_id: int, prompt_text: str, tech_prompt_text: str | None = None
+) -> PromptVersion:
     current = await session.scalar(
         select(func.max(PromptVersion.version)).where(PromptVersion.project_id == project_id)
     )
-    version = PromptVersion(project_id=project_id, prompt_text=prompt_text, version=(current or 0) + 1)
+    version = PromptVersion(
+        project_id=project_id,
+        prompt_text=prompt_text,
+        tech_prompt_text=tech_prompt_text or None,
+        version=(current or 0) + 1,
+    )
     session.add(version)
     return version
 
@@ -145,6 +152,19 @@ async def latest_prompt(session: AsyncSession, user_id: int, project_id: int) ->
         return None
     return await session.scalar(
         select(PromptVersion.prompt_text)
+        .where(PromptVersion.project_id == project_id)
+        .order_by(PromptVersion.version.desc())
+        .limit(1)
+    )
+
+
+async def latest_tech_prompt(session: AsyncSession, user_id: int, project_id: int) -> str | None:
+    """Loyihaning eng so'nggi prompt versiyasidagi texnik prompt (bo'lmasa None)."""
+    project = await get_project(session, user_id, project_id)
+    if project is None:
+        return None
+    return await session.scalar(
+        select(PromptVersion.tech_prompt_text)
         .where(PromptVersion.project_id == project_id)
         .order_by(PromptVersion.version.desc())
         .limit(1)

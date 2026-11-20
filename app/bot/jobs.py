@@ -19,7 +19,7 @@ from aiogram.utils.chat_action import ChatActionSender
 from sqlalchemy import delete, select
 
 from app.bot.context import AppContext
-from app.bot.helpers import alert_admins, maybe_send_promo, send_parts
+from app.bot.helpers import alert_admins, maybe_send_promo, send_documents, send_parts
 from app.bot.status import THINKING_TEXT, AnalysisProgress, drop_status, replace_status, send_status
 from app.core.logging import user_ref
 from app.database.models import PendingJob
@@ -109,6 +109,7 @@ async def run_analysis(bot: Bot, ctx: AppContext, job: Job) -> None:
     finally:
         await progress.finish(ok)
     await send_parts(bot, job.chat_id, output.parts)
+    await send_documents(bot, job.chat_id, output.documents)
     if output.report_html:
         await send_report(bot, job.chat_id, job.project_id, output.report_html)
     days = ctx.settings.followup_days

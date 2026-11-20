@@ -3,7 +3,8 @@
 Telegram bot ko'rinishidagi AI biznes maslahatchisi. Bot foydalanuvchi bilan menyusiz,
 jonli inson kabi suhbatlashadi, g'oyani savollar orqali chuqur o'rganadi, talab, raqobat
 va muvaffaqiyatsizlik sabablarini tanqidiy tahlil qiladi va oxirida boshqa AI larda
-ishlatish uchun tayyor **SUPER PROMPT** beradi.
+ishlatish uchun tayyor **SUPER PROMPT** beradi. G'oya dasturiy mahsulot bo'lsa (bot, ilova,
+sayt, platforma), dasturchi AI uchun alohida **TEXNIK PROMPT** ham beriladi.
 
 Qo'shimcha ravishda bot **pullik g'oyalar kanali**ni yuritadi:
 
@@ -18,6 +19,7 @@ Qo'shimcha ravishda bot **pullik g'oyalar kanali**ni yuritadi:
 | Menyusiz tabiiy suhbat, 6–12 ta moslashtirilgan savol | Ishlaydi (Gemini yoki OpenAI kaliti kerak) |
 | Tahlil: talab, raqobat, "nima uchun muvaffaqiyatsiz bo'lishi mumkin", optimist/skeptik bahsi, yakuniy qaror | Ishlaydi — hozircha **bitta** agent chaqiruvida |
 | SUPER PROMPT yaratish | Ishlaydi |
+| TEXNIK PROMPT (bot/ilova/sayt uchun: arxitektura, xavfsizlik, UI/UX, animatsiya, test, deploy) | Ishlaydi; uzun bo'lsa `.md` fayl qilib yuboriladi |
 | Internet qidiruvi | Faqat `AI_PROVIDER=openai` va `RESEARCH_PROVIDER=openai_web` bo'lsa. Gemini rejimida o'chiq. Aks holda bot buni ochiq aytadi va da'volarni "taxmin" deb belgilaydi |
 | Kunlik g'oya izlanishi + kanalga joylash | Ishlaydi (admin tasdig'i bilan yoki avtomatik) |
 | Kanal posti tugmasi → botda prompt | Ishlaydi (faqat kanal a'zolariga) |
@@ -32,7 +34,7 @@ Qo'shimcha ravishda bot **pullik g'oyalar kanali**ni yuritadi:
 app/
   main.py                 ishga tushirish, DI, polling, fon vazifalari
   config.py               .env sozlamalari (SecretStr)
-  agents/                 interviewer, analyst, prompt_engineer, idea_scout
+  agents/                 interviewer, analyst, prompt_engineer, tech_architect, idea_scout
   prompts/                agentlar tizim ko'rsatmalari (.txt)
   core/
     orchestrator.py       suhbat -> tahlil -> prompt (chaqiruvlar soni cheklangan)
@@ -141,6 +143,17 @@ Tahlil oxirida bot moliyaviy modelni (marja, zararsizlik nuqtasi, 3 ssenariy, qo
 **Python bilan hisoblaydi** — AI faqat kirish raqamlarini beradi. To'liq hisobot HTML fayl
 sifatida yuboriladi: brauzerda ochiladi va "Chop etish → PDF" bilan PDF qilib saqlanadi.
 
+TEXNIK PROMPT: biznes SUPER PROMPT strategiya, marketing, moliya va huquqiy masalalarni
+yoritadi. Agar g'oyaning o'zi dastur bo'lsa (Telegram bot, Web App, mobil ilova, sayt, SaaS),
+`tech_architect` agenti Claude Code, Cursor, ChatGPT yoki Gemini ga beriladigan texnik topshiriq
+yozadi: funksiyalar va user story lar, texnologiyalar, papka tuzilishi, ma'lumotlar modeli, API,
+xavfsizlik (initData HMAC tekshiruvi, rollar, IDOR/XSS/SQLi, rate limit, fayl yuklash, maxfiy
+kalitlar), UI/UX dizayn tizimi (ranglar, tipografiya, komponentlar, ekran holatlari), animatsiya,
+qulaylik va tezlik, admin panel, testlar, deploy va bosqichma-bosqich ish rejasi. Bu tahlilga
+bitta qo'shimcha AI so'rovi qo'shadi (o'z chegarasi: 16 000 token, 180 soniya); xato bo'lsa
+asosiy tahlil baribir yuboriladi. O'chirish: `/tech_prompt off` yoki `TECH_PROMPT=false`.
+`/prompt raqam` ikkala promptni ham qayta yuboradi.
+
 Ovozli xabarlar ham tushuniladi (Gemini matnga aylantiradi, so'ng oddiy suhbat davom etadi).
 
 Tahlildan `FOLLOWUP_DAYS` (standart 7) kun o'tgach bot "Kichik test qanday o'tdi?" deb so'raydi
@@ -172,7 +185,7 @@ Admin: `/admin` (statistika va AI xarajati), `/research` (izlanishni hozir boshl
 `/unblock tg_id`, `/promo`, `/settings` (kanal, karta, narx, kunlik g'oyalar va boshqalar),
 `/stats` (foydalanuvchilar, faollik, konversiya, tushum, obunachilar),
 `/broadcast` (xabarga reply qilib — hammaga yuborish, tasdiqlash bilan),
-`/websearch on|off`, `/post_images on|off|stock|ai|auto|test`, `/followup_days 7`, `/parsetest` (bank xabariga reply qilib — parser qanday o'qishini ko'rish),
+`/websearch on|off`, `/post_images on|off|stock|ai|auto|test`, `/tech_prompt on|off`, `/followup_days 7`, `/parsetest` (bank xabariga reply qilib — parser qanday o'qishini ko'rish),
 `/sub_days 30` (oylik obuna; muddat tugashidan 3 kun oldin eslatma, tugagach kanaldan
 chiqariladi; `0` — umrbod kirish).
 

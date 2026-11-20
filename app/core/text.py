@@ -234,8 +234,45 @@ def render_analysis(a: MarketAnalysis, sources: list[Source], web_used: bool) ->
     return out
 
 
-def render_prompt(title: str, prompt: str, how_to_use: str) -> list[str]:
-    body = split_message(prompt, limit=3000)
+PROMPT_CHUNK = 3000  # HTML escape matnni uzaytiradi (& -> &amp;), shuning uchun 4096 dan ancha kam
+TECH_INLINE_BLOCKS = 3  # texnik prompt shundan ko'p bo'lakka bo'linsa — faqat fayl qilib yuboriladi
+# Bo'lim boshlanishi: "## 3. NOMI", "### ...", yoki "**3. NOMI**" qatori.
+_SECTION_RE = re.compile(r"\n(?=#{1,4} |\*\*\d{1,2}[.)] )")
+
+
+def split_prompt(prompt: str, limit: int = PROMPT_CHUNK) -> list[str]:
+    """Promptni bo'lim (sarlavha) chegaralarida bo'ladi — sarlavha o'z matnidan ajralib qolmaydi.
+
+    Bo'limlar bo'lak limitigacha birlashtiriladi; bitta bo'lim limitdan uzun bo'lsa, u qator
+    chegarasida bo'linadi.
+    """
+    prompt = prompt.strip()
+    if len(prompt) <= limit:
+        return [prompt] if prompt else []
+    chunks: list[str] = []
+    current = ""
+    for section in _SECTION_RE.split(prompt):
+        section = section.strip("\n")
+        if not section.strip():
+            continue
+        for piece in split_message(section, limit=limit) if len(section) > limit else [section]:
+            candidate = f"{current}\n\n{piece}" if current else piece
+            if len(candidate) <= limit:
+                current = candidate
+            else:
+                chunks.append(current)
+                current = piece
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def _prompt_blocks(chunks: list[str]) -> list[str]:
+    return [f'<pre><code class="language-prompt">{e(chunk)}</code></pre>' for chunk in chunks]
+
+
+def render_prompt(title: str, prompt: str, how_to_use: str, *, tech_follows: bool = False) -> list[str]:
+    body = split_prompt(prompt)
     header = [heading("🤖", "SUPER PROMPT"), f"📌 <b>{e(title)}</b>"]
     if how_to_use:
         header += ["", e(how_to_use)]
@@ -248,9 +285,39 @@ def render_prompt(title: str, prompt: str, how_to_use: str) -> list[str]:
     ]
     if len(body) > 1:
         header += ["", f"🧩 Prompt <b>{len(body)} qismdan</b> iborat — hammasini ketma-ket yuboring."]
-    # HTML escape matnni uzaytirishi mumkin (& -> &amp;), shuning uchun bo'laklar 3000 belgidan.
-    blocks = [f'<pre><code class="language-prompt">{e(chunk)}</code></pre>' for chunk in body]
-    return ["\n".join(header), *blocks]
+    if tech_follows:
+        header += ["", "🛠 <i>Undan keyin dasturchi AI uchun alohida TEXNIK PROMPT ham keladi.</i>"]
+    return ["\n".join(header), *_prompt_blocks(body)]
+
+
+def tech_prompt_filename(project_id: int | str) -> str:
+    return f"texnik-prompt-{project_id}.md"
+
+
+def render_tech_prompt(title: str, prompt: str, how_to_use: str) -> list[str]:
+    """Dasturchi AI uchun TEXNIK PROMPT. Uzun bo'lsa matn bloklari o'rniga .md fayl yuboriladi."""
+    body = split_prompt(prompt)
+    inline = len(body) <= TECH_INLINE_BLOCKS
+    header = [
+        heading("🛠", "TEXNIK PROMPT"),
+        f"📌 <b>{e(title)}</b>",
+        "",
+        "💻 Dasturchi AI uchun to'liq topshiriq: arxitektura va kod tuzilishi, 🔐 xavfsizlik, "
+        "🎨 UI/UX dizayn, ✨ animatsiya, ⚡ qulaylik va tezlik, 🧪 testlar, 🚀 deploy.",
+    ]
+    if how_to_use:
+        header += ["", e(how_to_use)]
+    first = "Pastdagi bloklarni nusxalang" if inline else "📎 Quyidagi <b>.md faylni</b> yuklab oling"
+    header += [
+        "",
+        "📋 <b>Qanday ishlatiladi</b>",
+        f"{num(1)} {first}",
+        f"{num(2)} Claude Code, Cursor, ChatGPT yoki Gemini ga bering (faylni yuklasa ham bo'ladi)",
+        f"{num(3)} AI har bosqichdan keyin hisobot beradi — tekshirib, keyingisiga ruxsat bering",
+    ]
+    if inline and len(body) > 1:
+        header += ["", f"🧩 Prompt <b>{len(body)} qismdan</b> iborat — hammasini ketma-ket yuboring."]
+    return ["\n".join(header), *(_prompt_blocks(body) if inline else [])]
 
 
 def _clip(text: str, limit: int) -> str:
