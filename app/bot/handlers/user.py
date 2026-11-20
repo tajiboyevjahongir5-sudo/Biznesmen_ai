@@ -14,15 +14,15 @@ from aiogram.utils.chat_action import ChatActionSender
 
 from app.agents.analyst import MarketAnalysis
 from app.bot.context import AppContext
-from app.bot.helpers import is_channel_member, maybe_send_promo, send_documents, send_parts
+from app.bot.helpers import is_channel_member, maybe_send_promo, send_documents
 from app.bot.jobs import TRANSIENT_AI_ERRORS, Job, enqueue, has_pending, react, run_job, send_report
 from app.bot.status import LISTENING_TEXT, drop_status, replace_status, send_status
 from app.core.finance import build_model
 from app.core.logging import user_ref
-from app.core.orchestrator import tech_prompt_document
+from app.core.prompt_file import prompt_document
 from app.core.report import build_report_html
 from app.core.security import contains_sensitive_data, detect_prompt_injection, sanitize_user_text
-from app.core.text import SEP, e, render_prompt, render_tech_prompt
+from app.core.text import SEP, e
 from app.database import repository as repo
 from app.services.ai_service import AIServiceError
 from app.services.channel_service import DEEP_LINK_PREFIX
@@ -45,7 +45,7 @@ HELP_TEXT = (
     "🆕 /new — yangi g'oya\n"
     "⏹ /cancel — joriy suhbatni to'xtatish\n"
     "📂 /history — loyihalaringiz\n"
-    "🤖 /prompt <i>raqam</i> — promptni qayta olish\n"
+    "🤖 /prompt <i>raqam</i> — to'liq prompt faylini qayta olish\n"
     "📄 /report <i>raqam</i> — to'liq hisobot fayli\n"
     "🗑 /delete <i>raqam</i> — loyihani o'chirish\n"
     "💎 /kanal — kunlik g'oyalar kanali\n\n"
@@ -81,16 +81,15 @@ async def start_idea_link(message: Message, command: CommandObject, ctx: AppCont
         await message.answer("🔍 Bu g'oya topilmadi yoki hali e'lon qilinmagan.")
         return
     logger.info("idea_prompt_sent user=%s idea=%d", user_ref(tg_id), idea_id)
-    await send_parts(
-        bot,
-        message.chat.id,
-        render_prompt(
-            idea.title,
-            idea.prompt_text,
-            "Bu prompt kanaldagi g'oya asosida tayyorlangan. Uni o'z shahringiz, "
-            "byudjetingiz va tajribangizga moslab to'ldiring.",
-        ),
+    document = prompt_document(
+        f"goya-{idea_id}",
+        title=idea.title,
+        prompt=idea.prompt_text,
+        how_to_use="Bu prompt kanaldagi g'oya asosida tayyorlangan. Uni o'z shahringiz, "
+        "byudjetingiz va tajribangizga moslab to'ldiring.",
+        source=f"Kanal g'oyasi #{idea_id}",
     )
+    await send_documents(bot, message.chat.id, [document])
     await message.answer(
         "💬 Shu g'oyani o'zingizga moslab chuqurroq tahlil qilmoqchimisiz? "
         "Uni o'z so'zlaringiz bilan yozing — savollar bilan boshlaymiz."
@@ -171,16 +170,20 @@ async def prompt_cmd(
         )
         return
     async with ctx.session_factory() as session:
+        project = await repo.get_project(session, db_user_id, project_id)
         text = await repo.latest_prompt(session, db_user_id, project_id)
         tech = await repo.latest_tech_prompt(session, db_user_id, project_id)
-    if not text:
+    if project is None or not text:
         await message.answer("🔍 Bu raqamli tayyor loyiha topilmadi. Ro'yxat — /history")
         return
-    title = f"Loyiha #{project_id}"
-    await send_parts(bot, message.chat.id, render_prompt(title, text, "", tech_follows=bool(tech)))
-    if tech:
-        await send_parts(bot, message.chat.id, render_tech_prompt(title, tech, ""))
-        await send_documents(bot, message.chat.id, [tech_prompt_document(project_id, title, tech)])
+    document = prompt_document(
+        project_id,
+        title=project.title or f"Loyiha #{project_id}",
+        prompt=text,
+        tech_prompt=tech or "",
+        source=f"Loyiha #{project_id}",
+    )
+    await send_documents(bot, message.chat.id, [document])
 
 
 @router.message(Command("report"))

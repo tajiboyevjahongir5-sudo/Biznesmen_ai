@@ -29,15 +29,28 @@ PROMO_COOLDOWN = timedelta(hours=24)
 NO_PREVIEW = LinkPreviewOptions(is_disabled=True)
 
 
-async def send_documents(bot: Bot, chat_id: int, documents) -> None:
-    """Orkestrator tayyorlagan fayllarni (OutputDocument) yuboradi; xato bo'lsa jim o'tadi."""
-    for doc in documents:
+async def _send_document(bot: Bot, chat_id: int, doc) -> bool:
+    for _ in range(3):
         try:
             await bot.send_document(
                 chat_id, BufferedInputFile(doc.data, filename=doc.filename), caption=doc.caption or None
             )
+            return True
+        except TelegramRetryAfter as exc:
+            await asyncio.sleep(min(exc.retry_after, 30))
         except TelegramAPIError:
-            logger.warning("document_send_failed file=%s", doc.filename)
+            break
+    return False
+
+
+async def send_documents(bot: Bot, chat_id: int, documents) -> None:
+    """Fayllarni (OutputDocument) yuboradi. Yuborib bo'lmasa — zaxira matn xabarlari (bo'lsa)."""
+    for doc in documents:
+        if await _send_document(bot, chat_id, doc):
+            continue
+        logger.warning("document_send_failed file=%s", doc.filename)
+        if doc.fallback:
+            await send_parts(bot, chat_id, doc.fallback)
 
 
 async def send_parts(bot: Bot, chat_id: int, parts: list[str], **kwargs) -> None:

@@ -9,7 +9,7 @@ sayt, platforma), dasturchi AI uchun alohida **TEXNIK PROMPT** ham beriladi.
 Qo'shimcha ravishda bot **pullik g'oyalar kanali**ni yuritadi:
 
 - har kuni izlanish o'tkazib, talabi yuqori va raqobati past g'oyalarni topadi;
-- g'oyalarni kanalga joylaydi, post ostidagi tugma botga o'tib o'sha g'oya promptini beradi;
+- g'oyalarni kanalga joylaydi, post ostidagi tugma botga o'tib o'sha g'oya promptini fayl qilib beradi;
 - kanalga kirish uchun to'lovni **noyob summa** orqali avtomatik tekshiradi va **bir martalik** havola beradi.
 
 ## Hozir nima ishlaydi (haqiqiy holat)
@@ -18,8 +18,8 @@ Qo'shimcha ravishda bot **pullik g'oyalar kanali**ni yuritadi:
 |---|---|
 | Menyusiz tabiiy suhbat, 6–12 ta moslashtirilgan savol | Ishlaydi (Gemini yoki OpenAI kaliti kerak) |
 | Tahlil: talab, raqobat, "nima uchun muvaffaqiyatsiz bo'lishi mumkin", optimist/skeptik bahsi, yakuniy qaror | Ishlaydi — hozircha **bitta** agent chaqiruvida |
-| SUPER PROMPT yaratish | Ishlaydi |
-| TEXNIK PROMPT (bot/ilova/sayt uchun: arxitektura, xavfsizlik, UI/UX, animatsiya, test, deploy) | Ishlaydi; uzun bo'lsa `.md` fayl qilib yuboriladi |
+| SUPER PROMPT yaratish | Ishlaydi; foydalanuvchiga **bitta to'liq prompt fayli** (`toliq-prompt-N.md`) beriladi |
+| TEXNIK PROMPT (bot/ilova/sayt uchun: arxitektura, xavfsizlik, UI/UX, animatsiya, test, deploy) | Ishlaydi; SUPER PROMPT bilan o'sha bitta faylning 2-qismida |
 | Internet qidiruvi | Faqat `AI_PROVIDER=openai` va `RESEARCH_PROVIDER=openai_web` bo'lsa. Gemini rejimida o'chiq. Aks holda bot buni ochiq aytadi va da'volarni "taxmin" deb belgilaydi |
 | Kunlik g'oya izlanishi + kanalga joylash | Ishlaydi (admin tasdig'i bilan yoki avtomatik) |
 | Kanal posti tugmasi → botda prompt | Ishlaydi (faqat kanal a'zolariga) |
@@ -143,6 +143,12 @@ Tahlil oxirida bot moliyaviy modelni (marja, zararsizlik nuqtasi, 3 ssenariy, qo
 **Python bilan hisoblaydi** — AI faqat kirish raqamlarini beradi. To'liq hisobot HTML fayl
 sifatida yuboriladi: brauzerda ochiladi va "Chop etish → PDF" bilan PDF qilib saqlanadi.
 
+PROMPT FAYLI: prompt chatga bo'laklab emas, **bitta to'liq `.md` fayl** bo'lib keladi —
+foydalanuvchi uni bir marta ChatGPT, Gemini, Claude (dasturlash uchun Claude Code yoki Cursor) ga
+yuklaydi. Fayl tarkibi: foydalanish yo'riqnomasi, AI uchun ko'rsatma, 1-qism SUPER PROMPT
+(biznes), dasturiy g'oya bo'lsa 2-qism TEXNIK PROMPT. Fayl ostidagi izohda nima ichida ekani va
+qanday ishlatilishi yoziladi. Faylni yuborib bo'lmasa, o'sha matn bloklar ko'rinishida yuboriladi.
+
 TEXNIK PROMPT: biznes SUPER PROMPT strategiya, marketing, moliya va huquqiy masalalarni
 yoritadi. Agar g'oyaning o'zi dastur bo'lsa (Telegram bot, Web App, mobil ilova, sayt, SaaS),
 `tech_architect` agenti Claude Code, Cursor, ChatGPT yoki Gemini ga beriladigan texnik topshiriq
@@ -155,7 +161,7 @@ javobda model bo'limlarni qisqartirib yuborgani uchun hujjat 4 qismda yoziladi: 
 qismlari parallel — har qismda "kamida N ta" talablari bor. Bu tahlilga 4 ta qo'shimcha AI
 so'rovi qo'shadi (har biri: 16 000 token, 180 soniya); xato bo'lsa asosiy tahlil baribir
 yuboriladi. O'chirish: `/tech_prompt off` yoki `TECH_PROMPT=false`.
-`/prompt raqam` ikkala promptni ham qayta yuboradi.
+`/prompt raqam` to'liq prompt faylini qayta yuboradi.
 
 Ovozli xabarlar ham tushuniladi (Gemini matnga aylantiradi, so'ng oddiy suhbat davom etadi).
 

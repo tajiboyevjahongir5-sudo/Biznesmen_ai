@@ -1,4 +1,4 @@
-"""TEXNIK PROMPT: dasturiy g'oyalar uchun kod, xavfsizlik va UI/UX bo'yicha alohida prompt."""
+"""TEXNIK PROMPT va foydalanuvchiga beriladigan bitta to'liq prompt fayli."""
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -7,10 +7,12 @@ from app.agents.analyst import AnalystAgent
 from app.agents.interviewer import InterviewerAgent
 from app.agents.prompt_engineer import PromptEngineerAgent, SuperPrompt
 from app.agents.tech_architect import TechArchitectAgent, TechBlueprint, TechPrompt, TechSection, assemble
+from app.bot.helpers import send_documents
 from app.bot.status import AnalysisProgress
 from app.core.orchestrator import Orchestrator
+from app.core.prompt_file import build_prompt_markdown, prompt_document
 from app.core.report import build_report_html
-from app.core.text import render_prompt, render_tech_prompt, split_prompt
+from app.core.text import split_prompt
 from app.database import repository as repo
 from app.services.ai_service import AIResult, AIServiceError
 from tests.test_ai_and_orchestrator import _analysis, _completion, _gemini_service, _step
@@ -43,18 +45,53 @@ def test_split_prompt_splits_oversized_section_and_short_prompt():
     assert len(chunks) > 3 and all(len(c) <= 1000 for c in chunks)
 
 
-def test_render_tech_prompt_inline_or_file():
-    short = render_tech_prompt("Bot", TECH_TEXT, "Cursor ga bering")
-    assert "TEXNIK PROMPT" in short[0] and "xavfsizlik" in short[0]
-    assert len(short) == 2 and short[1].startswith("<pre><code")
-    long = render_tech_prompt("Bot", _sections(12, 2500), "")
-    assert len(long) == 1 and ".md faylni" in long[0]  # uzun bo'lsa — faqat fayl
+def test_prompt_file_combines_business_and_tech_prompts():
+    doc = build_prompt_markdown(
+        title="Ijara  boti",
+        prompt="## 1. ROL\nBiznes strateg.",
+        tech_prompt=TECH_TEXT,
+        how_to_use="ChatGPT ga\nyuklang",
+        tech_how_to_use="Claude Code ga bering",
+        source="Loyiha #7",
+    )
+    assert doc.startswith("# Ijara boti\n") and "Loyiha #7" in doc
+    assert "> ChatGPT ga yuklang" in doc and "> Claude Code ga bering" in doc
+    headings = ("QANDAY ISHLATILADI", "AI UCHUN", "# 1-QISM", "Biznes strateg", "# 2-QISM")
+    order = [doc.index(h) for h in headings]
+    assert order == sorted(order)
+    assert doc.index("initData HMAC") > doc.index("# 2-QISM")
+
+    business = build_prompt_markdown(title="Kafe", prompt="Biznes prompt matni")
+    assert "# SUPER PROMPT\n\nBiznes prompt matni" in business
+    assert "2-QISM" not in business and "TEXNIK" not in business and "Cursor" not in business
 
 
-def test_render_prompt_mentions_tech_prompt():
-    parts = render_prompt("Kafe", "P" * 300, "", tech_follows=True)
-    assert "TEXNIK PROMPT" in parts[0]
-    assert "TEXNIK PROMPT" not in render_prompt("Kafe", "P" * 300, "")[0]
+def test_prompt_document_has_caption_and_text_fallback():
+    doc = prompt_document(7, title="Bot", prompt="P" * 300, tech_prompt=TECH_TEXT, how_to_use="Yuklang")
+    assert doc.filename == "toliq-prompt-7.md"
+    text = doc.data.decode("utf-8")
+    assert "P" * 300 in text and "initData HMAC" in text
+    assert "SUPER PROMPT" in doc.caption and "Texnik" in doc.caption and "Yuklang" in doc.caption
+    assert doc.fallback and "Faylni yuborib bo'lmadi" in doc.fallback[0]
+    assert "initData HMAC" in "".join(doc.fallback)  # zaxira matn ham to'liq
+
+
+async def test_send_documents_falls_back_to_text_when_file_fails():
+    from aiogram.exceptions import TelegramBadRequest
+
+    doc = prompt_document(7, title="Bot", prompt="P" * 300)
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+    bot.send_document = AsyncMock()
+    await send_documents(bot, 1, [doc])
+    bot.send_document.assert_awaited_once()
+    bot.send_message.assert_not_awaited()
+    assert bot.send_document.call_args.kwargs["caption"] == doc.caption
+
+    bot.send_document = AsyncMock(side_effect=TelegramBadRequest(method=MagicMock(), message="fail"))
+    await send_documents(bot, 1, [doc])
+    sent = [c.args[1] for c in bot.send_message.call_args_list]
+    assert sent == doc.fallback
 
 
 def test_report_includes_tech_prompt():
@@ -214,9 +251,11 @@ async def test_software_idea_gets_tech_prompt(session_factory):
 
     assert stages == ["market", "finance", "prompt", "tech", "report"]
     assert tech_run.call_args.kwargs["product_type"] == "Telegram Web App + bot"
-    assert any("TEXNIK PROMPT" in p for p in out.parts)
-    assert out.documents and out.documents[0].filename == f"texnik-prompt-{project_id}.md"
-    assert "initData HMAC" in out.documents[0].data.decode("utf-8")
+    assert not any("PROMPT" in p for p in out.parts)  # prompt chatda bo'laklab emas — faylda
+    assert len(out.documents) == 1 and out.documents[0].filename == f"toliq-prompt-{project_id}.md"
+    text = out.documents[0].data.decode("utf-8")
+    assert "P" * 300 in text and "initData HMAC" in text and "2-QISM. TEXNIK PROMPT" in text
+    assert "Texnik" in out.documents[0].caption
     assert "TEXNIK PROMPT" in out.report_html
     async with session_factory() as s:
         assert await repo.latest_tech_prompt(s, user_id, project_id) == TECH_TEXT
@@ -231,7 +270,9 @@ async def test_non_software_idea_has_no_tech_prompt(session_factory):
         _orchestrator(session_factory, sp, tech_run), session_factory, stages
     )
     tech_run.assert_not_awaited()
-    assert "tech" not in stages and not out.documents
+    assert "tech" not in stages and len(out.documents) == 1
+    text = out.documents[0].data.decode("utf-8")
+    assert "P" * 300 in text and "TEXNIK PROMPT" not in text
     async with session_factory() as s:
         assert await repo.latest_tech_prompt(s, user_id, project_id) is None
 
@@ -240,14 +281,15 @@ async def test_tech_prompt_disabled_by_admin(session_factory):
     tech_run = AsyncMock()
     _, _, out = await _run(_orchestrator(session_factory, SOFTWARE, tech_run, enabled=False), session_factory)
     tech_run.assert_not_awaited()
-    assert not out.documents
+    assert len(out.documents) == 1 and "TEXNIK PROMPT" not in out.documents[0].data.decode("utf-8")
 
 
 async def test_tech_prompt_failure_does_not_break_analysis(session_factory):
     tech_run = AsyncMock(side_effect=AIServiceError("vaqt tugadi"))
     user_id, project_id, out = await _run(_orchestrator(session_factory, SOFTWARE, tech_run), session_factory)
-    assert out.parts and not out.documents
-    assert not any("TEXNIK PROMPT" in p for p in out.parts)
+    assert out.parts and len(out.documents) == 1
+    assert "TEXNIK PROMPT" not in out.documents[0].data.decode("utf-8")
+    assert "Texnik" not in out.documents[0].caption
     async with session_factory() as s:
         assert await repo.latest_prompt(s, user_id, project_id) == "P" * 300
 

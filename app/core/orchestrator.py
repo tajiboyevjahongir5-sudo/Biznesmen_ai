@@ -21,15 +21,9 @@ from app.agents.prompt_engineer import PromptEngineerAgent
 from app.agents.tech_architect import TechArchitectAgent
 from app.core.finance import build_model, finance_summary_for_ai, render_finance
 from app.core.logging import user_ref
+from app.core.prompt_file import OutputDocument, prompt_document
 from app.core.report import build_report_html
-from app.core.text import (
-    format_reply,
-    render_analysis,
-    render_prompt,
-    render_tech_prompt,
-    split_message,
-    tech_prompt_filename,
-)
+from app.core.text import format_reply, render_analysis, split_message
 from app.database import repository as repo
 from app.database.models import BusinessProject, Conversation, ProjectStatus
 
@@ -37,29 +31,10 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class OutputDocument:
-    """Xabarlardan keyin yuboriladigan fayl (masalan, uzun texnik prompt .md ko'rinishida)."""
-
-    filename: str
-    data: bytes
-    caption: str = ""
-
-
-@dataclass
 class AnalysisOutput:
     parts: list[str]  # Telegram xabarlari (HTML)
     report_html: str = ""  # yuklab olinadigan to'liq hisobot
-    documents: list[OutputDocument] = field(default_factory=list)
-
-
-def tech_prompt_document(project_id: int, title: str, prompt: str) -> OutputDocument:
-    """Texnik promptni .md fayl qiladi — AI dasturchi vositalariga to'g'ridan-to'g'ri yuklash qulay."""
-    text = f"# {title}\n\n{prompt.strip()}\n"
-    return OutputDocument(
-        filename=tech_prompt_filename(project_id),
-        data=text.encode("utf-8"),
-        caption="🛠 <b>TEXNIK PROMPT</b> — faylni Claude Code, Cursor, ChatGPT yoki Gemini ga bering.",
-    )
+    documents: list[OutputDocument] = field(default_factory=list)  # bitta to'liq prompt fayli
 
 
 @dataclass
@@ -293,13 +268,16 @@ class Orchestrator:
         out = render_analysis(analysis.data, analysis.sources, analysis.web_used)
         if finance.usable:
             out += split_message(render_finance(finance))
-        out += render_prompt(
-            super_prompt.title, super_prompt.prompt, super_prompt.how_to_use, tech_follows=tech is not None
+        # SUPER PROMPT va TEXNIK PROMPT — foydalanuvchiga bitta to'liq fayl.
+        prompt_file = prompt_document(
+            project_id,
+            title=super_prompt.title,
+            prompt=super_prompt.prompt,
+            tech_prompt=tech.prompt if tech is not None else "",
+            how_to_use=super_prompt.how_to_use,
+            tech_how_to_use=tech.how_to_use if tech is not None else "",
+            source=f"Loyiha #{project_id}",
         )
-        documents: list[OutputDocument] = []
-        if tech is not None:
-            out += render_tech_prompt(tech.title, tech.prompt, tech.how_to_use)
-            documents.append(tech_prompt_document(project_id, tech.title, tech.prompt))
         report = build_report_html(
             project_id=project_id,
             title=title,
@@ -311,7 +289,7 @@ class Orchestrator:
             prompt_text=super_prompt.prompt,
             tech_prompt_text=tech.prompt if tech is not None else "",
         )
-        return AnalysisOutput(out, report, documents)
+        return AnalysisOutput(out, report, [prompt_file])
 
     async def cancel_active(self, user_db_id: int) -> bool:
         async with self._sf() as session:

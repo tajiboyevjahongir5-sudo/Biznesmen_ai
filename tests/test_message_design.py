@@ -6,13 +6,15 @@ from app.agents.analyst import Claim, MarketAnalysis
 from app.agents.idea_scout import ScoutIdea
 from app.core.finance import FinanceInputs, build_model, render_finance
 from app.core.text import (
+    CAPTION_LIMIT,
     SAFE_LIMIT,
     TELEGRAM_LIMIT,
     level_line,
     num,
     render_analysis,
     render_channel_post,
-    render_prompt,
+    render_prompt_caption,
+    render_prompt_fallback,
     split_message,
 )
 from app.services.ai_service import Source
@@ -101,8 +103,13 @@ def test_render_analysis_parts_are_valid_html():
 
 
 def test_render_prompt_and_finance_are_valid_html():
-    parts = render_prompt("Kafe <1>", "Siz & biz\n" * 900, "Nusxa oling")
-    assert len(parts) >= 3 and "2 qismdan" not in parts[0]
+    caption = render_prompt_caption("Kafe <1> " * 40, "Nusxa & oling " * 200, has_tech=True)
+    assert_valid_html(caption)
+    assert len(caption) <= CAPTION_LIMIT and "&lt;1&gt;" in caption and "Texnik" in caption
+    assert "Texnik" not in render_prompt_caption("Kafe", "")
+
+    parts = render_prompt_fallback("Kafe <1>", "Siz & biz\n" * 900)
+    assert len(parts) >= 3 and "qismdan" in parts[0]
     for p in parts:
         assert_valid_html(p)
     assert parts[1].startswith('<pre><code class="language-prompt">')

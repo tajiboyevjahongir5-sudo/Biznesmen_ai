@@ -235,7 +235,6 @@ def render_analysis(a: MarketAnalysis, sources: list[Source], web_used: bool) ->
 
 
 PROMPT_CHUNK = 3000  # HTML escape matnni uzaytiradi (& -> &amp;), shuning uchun 4096 dan ancha kam
-TECH_INLINE_BLOCKS = 3  # texnik prompt shundan ko'p bo'lakka bo'linsa — faqat fayl qilib yuboriladi
 # Bo'lim boshlanishi: "## 3. NOMI", "### ...", yoki "**3. NOMI**" qatori.
 _SECTION_RE = re.compile(r"\n(?=#{1,4} |\*\*\d{1,2}[.)] )")
 
@@ -271,53 +270,42 @@ def _prompt_blocks(chunks: list[str]) -> list[str]:
     return [f'<pre><code class="language-prompt">{e(chunk)}</code></pre>' for chunk in chunks]
 
 
-def render_prompt(title: str, prompt: str, how_to_use: str, *, tech_follows: bool = False) -> list[str]:
-    body = split_prompt(prompt)
-    header = [heading("🤖", "SUPER PROMPT"), f"📌 <b>{e(title)}</b>"]
-    if how_to_use:
-        header += ["", e(how_to_use)]
-    header += [
+def render_prompt_caption(title: str, how_to_use: str = "", *, has_tech: bool = False) -> str:
+    """To'liq prompt fayli ostidagi matn: nima ichida va qanday ishlatiladi (caption — 1024 belgi)."""
+    contents = ["💼 Biznes: strategiya, marketing, moliya, huquqiy masalalar"]
+    if has_tech:
+        contents.append("🛠 Texnik: arxitektura, xavfsizlik, UI/UX, animatsiya, test, deploy")
+    tool = " (kod uchun — Claude Code yoki Cursor)" if has_tech else ""
+    steps = [
+        f"{num(1)} Faylni ChatGPT, Gemini yoki Claude ga yuklang{tool}",
+        f"{num(2)} «Shu fayldagi topshiriq bo'yicha ishla» deb yozing",
+        f"{num(3)} AI savollariga javob bering va rejani bosqichma-bosqich bajaring",
+    ]
+    text = ""
+    for budget in (360, 180, 0):
+        lines = [heading("🤖", "SUPER PROMPT"), f"📌 <b>{e(_clip(title, 120))}</b>"]
+        if how_to_use and budget:
+            lines += ["", f"<i>{e(_clip(how_to_use, budget))}</i>"]
+        lines += ["", "📎 <b>To'liq prompt — shu bitta faylda:</b>", *contents]
+        lines += ["", "📋 <b>Qanday ishlatiladi</b>", *steps]
+        text = "\n".join(lines)
+        if len(text) <= CAPTION_LIMIT - 100:  # emoji (UTF-16) va &amp; uchun zaxira
+            break
+    return text
+
+
+def render_prompt_fallback(title: str, document: str) -> list[str]:
+    """Faylni yuborib bo'lmasa: o'sha to'liq prompt matn bloklari ko'rinishida."""
+    body = split_prompt(document)
+    header = [
+        heading("🤖", "SUPER PROMPT"),
+        f"📌 <b>{e(_clip(title, 120))}</b>",
         "",
-        "📋 <b>Qanday ishlatiladi</b>",
-        f"{num(1)} Pastdagi blokni nusxalang (blok ustiga bosing)",
-        f"{num(2)} ChatGPT, Gemini yoki Claude kabi istalgan AI ga yuboring",
-        f"{num(3)} AI bergan rejani bosqichma-bosqich bajaring",
+        "⚠️ Faylni yuborib bo'lmadi — to'liq prompt quyida matn ko'rinishida.",
     ]
     if len(body) > 1:
-        header += ["", f"🧩 Prompt <b>{len(body)} qismdan</b> iborat — hammasini ketma-ket yuboring."]
-    if tech_follows:
-        header += ["", "🛠 <i>Undan keyin dasturchi AI uchun alohida TEXNIK PROMPT ham keladi.</i>"]
+        header.append(f"🧩 <b>{len(body)} qismdan</b> iborat — hammasini ketma-ket nusxalab, AI ga yuboring.")
     return ["\n".join(header), *_prompt_blocks(body)]
-
-
-def tech_prompt_filename(project_id: int | str) -> str:
-    return f"texnik-prompt-{project_id}.md"
-
-
-def render_tech_prompt(title: str, prompt: str, how_to_use: str) -> list[str]:
-    """Dasturchi AI uchun TEXNIK PROMPT. Uzun bo'lsa matn bloklari o'rniga .md fayl yuboriladi."""
-    body = split_prompt(prompt)
-    inline = len(body) <= TECH_INLINE_BLOCKS
-    header = [
-        heading("🛠", "TEXNIK PROMPT"),
-        f"📌 <b>{e(title)}</b>",
-        "",
-        "💻 Dasturchi AI uchun to'liq topshiriq: arxitektura va kod tuzilishi, 🔐 xavfsizlik, "
-        "🎨 UI/UX dizayn, ✨ animatsiya, ⚡ qulaylik va tezlik, 🧪 testlar, 🚀 deploy.",
-    ]
-    if how_to_use:
-        header += ["", e(how_to_use)]
-    first = "Pastdagi bloklarni nusxalang" if inline else "📎 Quyidagi <b>.md faylni</b> yuklab oling"
-    header += [
-        "",
-        "📋 <b>Qanday ishlatiladi</b>",
-        f"{num(1)} {first}",
-        f"{num(2)} Claude Code, Cursor, ChatGPT yoki Gemini ga bering (faylni yuklasa ham bo'ladi)",
-        f"{num(3)} AI har bosqichdan keyin hisobot beradi — tekshirib, keyingisiga ruxsat bering",
-    ]
-    if inline and len(body) > 1:
-        header += ["", f"🧩 Prompt <b>{len(body)} qismdan</b> iborat — hammasini ketma-ket yuboring."]
-    return ["\n".join(header), *(_prompt_blocks(body) if inline else [])]
 
 
 def _clip(text: str, limit: int) -> str:
