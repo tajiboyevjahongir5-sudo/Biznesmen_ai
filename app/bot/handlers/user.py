@@ -16,6 +16,7 @@ from app.agents.analyst import MarketAnalysis
 from app.bot.context import AppContext
 from app.bot.helpers import is_channel_member, maybe_send_promo, send_parts
 from app.bot.jobs import TRANSIENT_AI_ERRORS, Job, enqueue, has_pending, react, run_job, send_report
+from app.bot.status import LISTENING_TEXT, drop_status, replace_status, send_status
 from app.core.finance import build_model
 from app.core.logging import user_ref
 from app.core.report import build_report_html
@@ -269,28 +270,35 @@ async def voice_message(message: Message, ctx: AppContext, db_user_id: int, bot:
     if not await ctx.user_locks.try_acquire(tg_id):
         await message.answer("⏳ Oldingi xabaringiz ustida ishlayapman, biroz kuting.")
         return
+    status_id = None
     try:
         await react(bot, message.chat.id, message.message_id, "👀")
+        status_id = await send_status(bot, message.chat.id, LISTENING_TEXT)
         async with ChatActionSender.typing(bot=bot, chat_id=message.chat.id):
             buf = await bot.download(media, destination=io.BytesIO())
             mime = getattr(media, "mime_type", None) or ("video/mp4" if message.video_note else "audio/ogg")
             text = await ctx.ai.transcribe(user_id=tg_id, audio=buf.getvalue(), mime=mime)
     except TRANSIENT_AI_ERRORS:
+        await drop_status(bot, message.chat.id, status_id)
         await message.answer("⏳ AI hozir band, ovozni tinglay olmadim. Bir daqiqadan keyin qayta yuboring.")
         return
     except AIServiceError as exc:
+        await drop_status(bot, message.chat.id, status_id)
         await message.answer(exc.user_message)
         return
     except TelegramAPIError:
+        await drop_status(bot, message.chat.id, status_id)
         await message.answer("🎙 Ovozli xabarni yuklab bo'lmadi. Qayta yuboring.")
         return
     finally:
         await ctx.user_locks.release(tg_id)
     if len(text) < 2:
+        await drop_status(bot, message.chat.id, status_id)
         await message.answer("🎙 Ovozdan gap eshitilmadi. Iltimos, qayta yozib yuboring.")
         return
     logger.info("voice_transcribed user=%s chars=%d", user_ref(tg_id), len(text))
-    await message.answer(f"🎙 <i>{e(text[:600])}{'…' if len(text) > 600 else ''}</i>")
+    echo = f"🎙 <i>{e(text[:600])}{'…' if len(text) > 600 else ''}</i>"
+    await replace_status(bot, message.chat.id, status_id, [echo])  # «Tinglayapman» → aytilgan matn
     await _process_text(message, ctx, db_user_id, bot, text)
 
 

@@ -20,6 +20,7 @@ from sqlalchemy import delete, select
 
 from app.bot.context import AppContext
 from app.bot.helpers import alert_admins, maybe_send_promo, send_parts
+from app.bot.status import THINKING_TEXT, AnalysisProgress, drop_status, replace_status, send_status
 from app.core.logging import user_ref
 from app.database.models import PendingJob
 from app.services.ai_service import (
@@ -71,36 +72,42 @@ async def react(bot: Bot, chat_id: int, message_id: int, emoji: str) -> None:
 async def run_job(bot: Bot, ctx: AppContext, job: Job) -> None:
     """Suhbat qadamini (va kerak bo'lsa tahlilni) bajaradi. AI xatolarini yuqoriga uzatadi."""
     if job.phase == "turn":
-        async with ChatActionSender.typing(bot=bot, chat_id=job.chat_id):
-            result = await ctx.orchestrator.handle_user_text(
-                telegram_id=job.tg_id, user_db_id=job.db_user_id, text=job.text, user_name=job.user_name
-            )
+        # "typing" yozuvini o'zgartirib bo'lmaydi — o'z holat xabarimizni ko'rsatamiz.
+        status_id = await send_status(bot, job.chat_id, THINKING_TEXT)
+        try:
+            async with ChatActionSender.typing(bot=bot, chat_id=job.chat_id):
+                result = await ctx.orchestrator.handle_user_text(
+                    telegram_id=job.tg_id, user_db_id=job.db_user_id, text=job.text, user_name=job.user_name
+                )
+        except BaseException:
+            await drop_status(bot, job.chat_id, status_id)
+            raise
         if result.reaction:
             await react(bot, job.chat_id, job.message_id, result.reaction)
-        await send_parts(bot, job.chat_id, result.messages)
+        await replace_status(bot, job.chat_id, status_id, result.messages)
         if result.looking_for_idea:
             await maybe_send_promo(bot, ctx, job.tg_id, job.chat_id)
         if not (result.run_analysis and result.project_id):
             return
         job.phase, job.project_id = "analysis", result.project_id
-        await bot.send_message(
-            job.chat_id,
-            "🧠 <b>Ma'lumot yetarli — tahlilni boshladim!</b>\n\n"
-            "🔎 Bozor va talab\n"
-            "⚔️ Raqobatchilar\n"
-            "⚠️ Xavflar va agentlar bahsi\n"
-            "💰 Moliyaviy model\n"
-            "🤖 SUPER PROMPT\n\n"
-            "⏳ <i>Bu 1–3 daqiqa vaqt oladi, kuting.</i>",
-        )
     await run_analysis(bot, ctx, job)
 
 
 async def run_analysis(bot: Bot, ctx: AppContext, job: Job) -> None:
-    async with ChatActionSender.typing(bot=bot, chat_id=job.chat_id):
-        output = await ctx.orchestrator.run_analysis(
-            telegram_id=job.tg_id, user_db_id=job.db_user_id, project_id=job.project_id
-        )
+    progress = AnalysisProgress(bot, job.chat_id, web=bool(ctx.ai.web_search_available))
+    await progress.start()
+    ok = False
+    try:
+        async with ChatActionSender.typing(bot=bot, chat_id=job.chat_id):
+            output = await ctx.orchestrator.run_analysis(
+                telegram_id=job.tg_id,
+                user_db_id=job.db_user_id,
+                project_id=job.project_id,
+                progress=progress.stage,
+            )
+        ok = True
+    finally:
+        await progress.finish(ok)
     await send_parts(bot, job.chat_id, output.parts)
     if output.report_html:
         await send_report(bot, job.chat_id, job.project_id, output.report_html)

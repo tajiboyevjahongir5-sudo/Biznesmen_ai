@@ -175,7 +175,14 @@ def _ctx(session_factory, orchestrator):
 
 def _bot():
     bot = MagicMock()
-    for name in ("send_message", "send_chat_action", "set_message_reaction", "send_document"):
+    for name in (
+        "send_message",
+        "send_chat_action",
+        "set_message_reaction",
+        "send_document",
+        "edit_message_text",
+        "delete_message",
+    ):
         setattr(bot, name, AsyncMock())
     return bot
 
@@ -206,7 +213,9 @@ async def test_pending_job_survives_and_completes(session_factory):
     bot = _bot()
     assert await jobs.process_due_jobs(bot, ctx) == 1
     assert not await jobs.has_pending(ctx, 321)
-    assert any(c.args[1] == "Javob" for c in bot.send_message.call_args_list)
+    # Javob «O'ylayapman...» holat xabari o'rniga tahrir qilib qo'yiladi
+    assert bot.send_message.call_args_list[0].args[1] == "💭 <i>O'ylayapman...</i>"
+    assert bot.edit_message_text.call_args.args[0] == "Javob"
 
 
 async def test_pending_job_retries_then_gives_up(session_factory):

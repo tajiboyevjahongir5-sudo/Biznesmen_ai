@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
@@ -158,8 +158,28 @@ class Orchestrator:
                     await session.delete(msg)
             await session.commit()
 
-    async def run_analysis(self, *, telegram_id: int, user_db_id: int, project_id: int) -> AnalysisOutput:
-        """Tahlil va SUPER PROMPT. Xato bo'lsa loyiha suhbat holatiga qaytadi."""
+    async def run_analysis(
+        self,
+        *,
+        telegram_id: int,
+        user_db_id: int,
+        project_id: int,
+        progress: Callable[[str], Awaitable[None]] | None = None,
+    ) -> AnalysisOutput:
+        """Tahlil va SUPER PROMPT. Xato bo'lsa loyiha suhbat holatiga qaytadi.
+
+        `progress(bosqich)` — foydalanuvchiga jonli holat ko'rsatish uchun:
+        market → finance → prompt → report.
+        """
+
+        async def notify(stage: str) -> None:
+            if progress is None:
+                return
+            try:
+                await progress(stage)
+            except Exception:  # noqa: BLE001 - holat xabari tahlilni to'xtatmasin
+                logger.debug("progress_failed", exc_info=True)
+
         async with self._sf() as session:
             project = await repo.get_project(session, user_db_id, project_id)
             if project is None:
@@ -176,16 +196,19 @@ class Orchestrator:
         notes_text = "\n\n".join(f"[{n.created_at:%Y-%m-%d}] {n.content}" for n in notes)
 
         try:
+            await notify("market")
             analysis = await self.analyst.run(
                 user_id=telegram_id, idea=idea, conversation=conversation, notes=notes_text
             )
             analysis_json = analysis.data.model_dump_json()
+            await notify("finance")
             finance = build_model(analysis.data.finance)
             idea_data = f"G'oya: {idea}\n\nSuhbat:\n{conversation}"
             sources_json = json.dumps([s.__dict__ for s in analysis.sources], ensure_ascii=False)
             finance_text = (
                 finance_summary_for_ai(finance) if finance.usable else "(moliyaviy ma'lumot yetarli emas)"
             )
+            await notify("prompt")
             super_prompt = await self.prompt_engineer.run(
                 user_id=telegram_id,
                 idea_data=idea_data,
@@ -214,6 +237,7 @@ class Orchestrator:
             title = project.title or idea[:80]
             await session.commit()
 
+        await notify("report")
         out = render_analysis(analysis.data, analysis.sources, analysis.web_used)
         if finance.usable:
             out += split_message(render_finance(finance))
