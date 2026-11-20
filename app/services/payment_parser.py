@@ -16,7 +16,7 @@ from dataclasses import dataclass
 # Kirim (pul tushdi) belgilari
 _INCOME_RE = re.compile(
     r"(?i)(popolnen|пополнен|zachislen|зачислен|postuplen|поступлен|kirim|tushdi|"
-    r"to'ldirildi|to‘ldirildi|o'tkazma\s+qabul|perevod\s+na\s+kartu|перевод\s+на\s+карту|"
+    r"to.ldirildi|to.ldirish|o'tkazma\s+qabul|perevod\s+na\s+kartu|перевод\s+на\s+карту|"
     r"\bincome\b|credited|received|➕|🟢)"
 )
 # Chiqim belgilari — bunday xabarlar e'tiborga olinmaydi
@@ -63,7 +63,14 @@ def parse_payment(text: str, custom_regex: str = "") -> ParsedPayment | None:
         return ParsedPayment(0, False)
     if not _INCOME_RE.search(text):
         return None
-    m = _AMOUNT_RE.search(text)
+    # Avval kirim qatori (➕ ...) dagi summa: pastdagi "💰 balans" qatori hech qachon olinmaydi.
+    m = None
+    for line in text.splitlines():
+        if "➕" in line or line.lstrip().startswith("+"):
+            m = _AMOUNT_RE.search(line)
+            if m:
+                break
+    m = m or _AMOUNT_RE.search(text)
     if not m:
         return None
     amount = _to_int(m.group(1), m.group(2))
