@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import math
+import time
 from datetime import UTC, datetime, timedelta
 
 from aiogram import Bot, F, Router
-from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramRetryAfter
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from app.bot.context import AppContext
@@ -24,8 +26,27 @@ logger = logging.getLogger(__name__)
 router = Router(name="payment")
 channel_router = Router(name="payment_channel")
 
-TIMER_TICK_SECONDS = 30
+# Taymer har soniyada yangilanadi. Telegram limiti (~30 xabar/soniya butun bot uchun) oshmasligi
+# uchun bir vaqtda ko'p to'lov bo'lsa, yangilash oralig'i avtomatik uzayadi.
+TIMER_MIN_TICK = 1.0
+TIMER_MAX_TICK = 10.0
+TIMER_EDITS_PER_SECOND = 20  # barcha taymerlar uchun umumiy, xabar yuborishga ham joy qoladi
+STATUS_CHECK_SECONDS = 5.0  # DB dagi holatni (to'landi/bekor) shu oraliqda tekshiramiz
 _timers: dict[int, asyncio.Task] = {}
+
+
+def tick_interval(active_timers: int, slowdown: float = 1.0) -> float:
+    base = max(TIMER_MIN_TICK, active_timers / TIMER_EDITS_PER_SECOND)
+    return min(TIMER_MAX_TICK, base * slowdown)
+
+
+def progress_bar(left: int, total: int, cells: int = 10) -> str:
+    if total <= 0:
+        return ""
+    ratio = max(0.0, min(1.0, left / total))
+    filled = math.ceil(ratio * cells)
+    color = "🟩" if ratio > 0.5 else ("🟨" if ratio > 0.2 else "🟥")
+    return color * filled + "⬜" * (cells - filled)
 
 
 def _card(number: str) -> str:
@@ -38,15 +59,19 @@ def _aware(dt: datetime) -> datetime:
 
 def payment_text(ctx: AppContext, r: PaymentReservation, now: datetime) -> str:
     s = ctx.settings
-    left = max(0, int((_aware(r.expires_at) - now).total_seconds()))
+    expires = _aware(r.expires_at)
+    left = max(0, int((expires - now).total_seconds()))
+    total = int((expires - _aware(r.created_at)).total_seconds()) if r.created_at else 0
     mm, ss = divmod(left, 60)
+    clock = "⌛" if ss % 2 else "⏳"  # har soniyada almashib, "jonli" ko'rinadi
+    hurry = "  ⚠️ <i>vaqt oz qoldi!</i>" if 0 < left <= 60 else ""
     holder = f"\nKarta egasi: <b>{e(s.payment_card_holder)}</b>" if s.payment_card_holder else ""
     return (
         f"💳 <b>Kanalga kirish uchun to'lov</b> {access_period(s.subscription_days)}\n\n"
         f"Karta raqami: <code>{_card(s.payment_card_number)}</code>{holder}\n"
         f"To'lov summasi: <code>{r.amount}</code> so'm\n"
         f"(<b>{format_money(r.amount)} so'm</b> — aynan shu summani o'tkazing)\n\n"
-        f"⏳ Qolgan vaqt: <b>{mm}:{ss:02d}</b>\n\n"
+        f"{clock} Qolgan vaqt: <b>{mm}:{ss:02d}</b>{hurry}\n{progress_bar(left, total)}\n\n"
         "📌 Muhim:\n"
         f"• Summaning oxirgi raqamlari ({r.offset}) sizning to'lovingizni boshqalardan ajratadi. "
         "Summani yaxlitlamang.\n"
@@ -123,15 +148,33 @@ def stop_timer(reservation_id: int) -> None:
 
 
 async def _timer_loop(bot: Bot, ctx: AppContext, reservation_id: int, chat_id: int, message_id: int) -> None:
-    """To'lov xabaridagi taymerni yangilaydi; vaqt tugasa summani bo'shatadi."""
+    """To'lov xabaridagi taymerni har soniyada yangilaydi; vaqt tugasa summani bo'shatadi.
+
+    To'lov tasdiqlansa yoki bekor qilinsa `stop_timer` taymerni darhol to'xtatadi;
+    qo'shimcha xavfsizlik uchun DB dagi holat ham har bir necha soniyada tekshiriladi.
+    """
     try:
+        r = await ctx.payments.get(reservation_id)
+        if r is None or r.status != PaymentStatus.PENDING:
+            return
+        expires = _aware(r.expires_at)
+        slowdown = 1.0
+        last_check = time.monotonic()
+        last_text = ""
         while True:
-            await asyncio.sleep(TIMER_TICK_SECONDS)
-            r = await ctx.payments.get(reservation_id)
-            if r is None or r.status != PaymentStatus.PENDING:
-                return
+            interval = tick_interval(len(_timers), slowdown)
+            left = (expires - datetime.now(UTC)).total_seconds()
+            # Keyingi butun soniya chegarasigacha kutamiz — raqamlar tekis almashadi.
+            await asyncio.sleep(max(0.2, (left % 1) + 0.05 + (interval - 1)))
             now = datetime.now(UTC)
-            if _aware(r.expires_at) <= now:
+
+            if time.monotonic() - last_check >= STATUS_CHECK_SECONDS or expires <= now:
+                last_check = time.monotonic()
+                r = await ctx.payments.get(reservation_id)
+                if r is None or r.status != PaymentStatus.PENDING:
+                    return
+
+            if expires <= now:
                 await ctx.payments.sweep_expired()
                 r = await ctx.payments.get(reservation_id)
                 if r and r.status == PaymentStatus.EXPIRED:
@@ -139,12 +182,25 @@ async def _timer_loop(bot: Bot, ctx: AppContext, reservation_id: int, chat_id: i
                         bot,
                         chat_id,
                         message_id,
-                        "To'lov vaqti tugadi va summa bekor qilindi.\n\n"
+                        "⌛ To'lov vaqti tugadi va summa bekor qilindi.\n\n"
                         "Agar pul o'tkazgan bo'lsangiz, xavotir olmang — administrator "
                         "tekshiradi. Yangi to'lov uchun /kanal yuboring.",
                     )
                 return
-            await _safe_edit(bot, chat_id, message_id, payment_text(ctx, r, now), payment_kb(r.id))
+
+            text = payment_text(ctx, r, now)
+            if text == last_text:
+                continue
+            result = await _safe_edit(bot, chat_id, message_id, text, payment_kb(r.id))
+            if result == "gone":
+                return  # foydalanuvchi xabarni o'chirgan — taymer kerak emas
+            if isinstance(result, float):
+                # Telegram sekinlashtirishni so'radi: kutamiz va keyingi yangilashlarni siyraklashtiramiz.
+                slowdown = min(slowdown * 2, TIMER_MAX_TICK)
+                await asyncio.sleep(result)
+            else:
+                last_text = text
+                slowdown = max(1.0, slowdown * 0.9)
     except asyncio.CancelledError:
         raise
     except Exception:  # noqa: BLE001 - taymer xatosi botni to'xtatmasin
@@ -156,11 +212,18 @@ async def _timer_loop(bot: Bot, ctx: AppContext, reservation_id: int, chat_id: i
 
 async def _safe_edit(
     bot: Bot, chat_id: int, message_id: int, text: str, kb: InlineKeyboardMarkup | None = None
-) -> None:
+) -> str | float | None:
+    """Xabarni tahrirlaydi. Qaytaradi: None — muvaffaqiyatli; "gone" — xabar yo'q;
+    float — Telegram so'ragan kutish vaqti (soniya)."""
     try:
         await bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, reply_markup=kb)
-    except TelegramBadRequest:
-        pass  # xabar o'zgarmagan yoki o'chirilgan
+    except TelegramRetryAfter as exc:
+        return float(min(exc.retry_after, 30))
+    except TelegramBadRequest as exc:
+        msg = str(exc).lower()
+        if "not found" in msg or "can't be edited" in msg:
+            return "gone"
+    return None
 
 
 async def deliver_access(bot: Bot, ctx: AppContext, r: PaymentReservation) -> bool:
